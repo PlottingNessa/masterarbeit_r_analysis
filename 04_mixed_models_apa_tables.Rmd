@@ -1,0 +1,2442 @@
+---
+title: "Mixed Effects Model"
+output: html_document
+date: "2025-04-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Mixed Effects Model
+
+- Goal: The study aims to identify country-specific differences in the relationship between political orientation and risk perception. I expect political orientation to be a significant predictor for the perception for some of the 12 risks.
+
+- Political Orientation: I think if I treat political orientation as a continuous scale this might be better suited for the mixed-effects model. By using a continuous variable, I can capture the full range of variation in political orientation and analyze the effects more precisely. A continuous scale could also allow me to detect more differences in how political views influence the perception of risks, as it doesn't force a categorization.
+
+Each political orientation scale had 11 response options (0-10, in 1-point intervals). When averaging the two scales, the resulting combined score could take on 21 possible values in 0.5 increments, ranging from 0.0 to 10.0
+
+- Data: I will do the analysis with the sample of threshold ≥ 3 minutes for a better data quality.
+
+- Sample: 3’667 individuals, Germany (N = 1’815) ; USA (N = 1’852)
+
+
+## Used packages
+```{r, results = "hide"}
+library(tidyverse)
+library(readxl)
+library(visdat)
+install.packages("XLConnect")
+install.packages("car")
+library(car)
+library(XLConnect)
+library(knitr)
+library(viridis)
+library(lme4)
+install.packages("lmerTest")
+library(lmerTest)
+install.packages("ggeffects")
+library(ggeffects)
+install.packages("broom.mixed")
+library(broom.mixed)
+install.packages("gt")
+library(gt)
+install.packages("webshot2")
+
+```
+
+## Visualizations
+
+
+## Distribution of Political Orientation: GER vs. USA
+
+This plot shows the first differences in the distribution of political orientation. In the USA there is a higher density at the extreme points around 0.0 and 10.0, while in Germany there is a significantly higher density in the centre around 5.0.
+
+
+```{r pressure, echo=FALSE}
+
+ggplot(df_3_tresh_cleaned_long, aes(x = CombinedPoliticalValue, fill = Country, color = Country)) +
+  geom_density(alpha = 0.4, size = 1.2) +
+  labs(x = "Political Orientation",
+       y = "Density") +
+  scale_color_manual(values = c("US" = "#4F81BD", "DE" = "#E57373"),
+                     labels = c("US" = "USA", "DE" = "Germany")) +
+  scale_fill_manual(values = c("US" = "#4F81BD", "DE" = "#E57373"),
+                    labels = c("US" = "USA", "DE" = "Germany")) +
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(), 
+        strip.text = element_text(size = 12, face = "bold"))
+
+
+
+
+p <- ggplot(df_3_tresh_cleaned_long, aes(x = CombinedPoliticalValue, fill = Country, color = Country)) +
+  geom_density(alpha = 0.4, size = 1.2) +
+  labs(x = "Political Orientation",
+       y = "Density") +
+  scale_color_manual(values = c("US" = "#E57373", "DE" = "#4F81BD"),
+                     labels = c("US" = "USA", "DE" = "Germany")) +
+  scale_fill_manual(values = c("US" = "#E57373", "DE" = "#4F81BD"),
+                    labels = c("US" = "USA", "DE" = "Germany")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA),
+    axis.title = element_text(size = 16),     # Achsentitel größer
+    axis.text  = element_text(size = 14),     # Achsenbeschriftung größer
+    legend.text = element_text(size = 14)     # Legendentext größer
+  )
+
+# Plot speichern
+ggsave("PoliticalOrientation_Density_US_DE_WhiteBG_LargerAxes.png", plot = p, width = 8, height = 5, dpi = 300)
+
+
+
+```
+
+Here we can already see a tendency due to the density distribution. 
+
+In the USA, people with a low political orientation tend to have a high risk perception, while people with higher scores on the political scale have a lower risk perception.
+
+In Germany, it seems to be the other way round - people with high scores on the scale show a higher risk perception than people with lower scores.
+```{r pressure, echo=FALSE}
+# Risk Perception Density by Political Orientation and Country
+
+
+p <- ggplot(df_3_tresh_cleaned_long, 
+            aes(x = Rating, 
+                weight = CombinedPoliticalValue, 
+                fill = Country, 
+                color = Country)) +
+  geom_density(alpha = 0.4, size = 1.2) +
+  labs(x = "Risk Perception",
+       y = "Density") +
+  scale_color_manual(values = c("US" = "#E57373", "DE" = "#4F81BD"),
+                     labels = c("US" = "USA", "DE" = "Germany")) +
+  scale_fill_manual(values = c("US" = "#E57373", "DE" = "#4F81BD"),
+                    labels = c("US" = "USA", "DE" = "Germany")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    legend.title = element_blank(), 
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA),
+    axis.title = element_text(size = 16),      # Achsentitel größer
+    axis.text  = element_text(size = 14),      # Achsenbeschriftung größer
+    legend.text = element_text(size = 14)      # Legendentext größer
+  )
+
+# Plot speichern
+ggsave("RiskPerception_Density_US_DE.png", plot = p, width = 8, height = 5, dpi = 300)
+
+
+
+```
+
+```{r pressure, echo=FALSE}
+setwd("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\Plots") 
+
+```
+## Does the influence of Political Orientation differ depending on country and risk?
+
+
+## 1.0 Country Comparison Overall Risk Perception
+
+# 1.1 Germany Political Orientation
+```{r pressure, echo=FALSE}
+model_pol_de <- lmer(
+  Rating ~ CombinedPoliticalValue +
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_de
+)
+
+summary(model_pol_de)
+```
+## Table Germany
+```{r pressure, echo=FALSE}
+
+# Extract fixed effects from the German model
+fixed_effects_germany <- tidy(model_pol_de, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Political Orientation",
+    TRUE ~ Predictor
+)) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table with significance stars for Germany
+apa_mixed_table_germany <- fixed_effects_germany %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print the table for Germany
+apa_mixed_table_germany
+
+# Save the table to a file
+gtsave(apa_mixed_table_germany, "Mixed_Models_APA_model_germany.png")
+
+
+```
+
+# 1.2 USA Political Orientation
+```{r pressure, echo=FALSE}
+model_pol_us <- lmer(
+  Rating ~ CombinedPoliticalValue +
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_us,
+   control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(model_pol_us)
+```
+
+## Table USA
+```{r pressure, echo=FALSE}
+
+## Extract fixed effects from the US model
+fixed_effects_us <- tidy(model_pol_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+ mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Political Orientation",
+    TRUE ~ Predictor
+)) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table with significance stars for US
+apa_mixed_table_us <- fixed_effects_us %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print the table for US
+apa_mixed_table_us
+
+# Save the table to a file
+gtsave(apa_mixed_table_us, "Mixed_Models_APA_model_us.png")
+
+
+```
+
+
+
+
+## 1.3 Dimensions and Political Orientation: Germany
+```{r pressure, echo=FALSE}
+
+
+model_pol_dim_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Dimension + (1 + CombinedPoliticalValue  | id),
+  data = df_3_tresh_cleaned_long_de,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+  
+# Zusammenfassung anzeigen
+summary(model_pol_dim_de)
+
+
+```
+# Table Dimensions Germany
+
+```{r pressure, echo=FALSE}
+
+
+# Extract fixed effects
+fixed_effects_de_dim <- tidy(model_pol_dim_de, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = str_replace(Predictor, ":", " x "),
+         Predictor = case_when(
+           Predictor == "(Intercept)" ~ "Intercept",
+           Predictor == "Risk_DimensionProbs" ~ "Probability",
+           Predictor == "Risk_DimensionSever" ~ "Consequence",
+           Predictor == "CombinedPoliticalValue:Probability" ~ "Political Orientation x Probability",
+           Predictor == "CombinedPoliticalValue:Consequence" ~ "Political Orientation x Consequence",
+           TRUE ~ Predictor
+         )) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_de_dim <- fixed_effects_de_dim %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_de_dim
+
+# Save table
+gtsave(apa_table_de_dim, "Mixed_Models_APA_model_germany_dimensions.png")
+
+
+
+
+# Fixed Effects extrahieren
+fixed_effects_de_dim <- tidy(model_pol_dim_de, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Political Orientation",
+    Predictor == "Risk_DimensionProbs" ~ "Probability",
+    Predictor == "Risk_DimensionSever" ~ "Consequence",
+    Predictor == "CombinedPoliticalValue:Risk_DimensionProbs" ~ "Political Orientation × Probability",
+    Predictor == "CombinedPoliticalValue:Risk_DimensionSever" ~ "Political Orientation × Consequence",
+    TRUE ~ Predictor
+  )) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# APA-Tabelle erstellen
+apa_table_de_dim <- fixed_effects_de_dim %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Tabelle anzeigen
+apa_table_de_dim
+
+# Tabelle speichern
+gtsave(apa_table_de_dim, "Mixed_Models_APA_model_germany_dimensions.png")
+
+```
+
+
+## 1.3 Dimensions and Political Orientation: USA
+```{r pressure, echo=FALSE}
+
+
+model_pol_dim_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Dimension + (1 + CombinedPoliticalValue  |  id),
+  data = df_3_tresh_cleaned_long_us,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+  
+# Zusammenfassung anzeigen
+summary(model_pol_dim_us)
+
+
+```
+# Table Dimensions USA
+
+```{r pressure, echo=FALSE}
+
+
+# Fixed Effects extrahieren
+fixed_effects_us_dim <- tidy(model_pol_dim_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Political Orientation",
+    Predictor == "Risk_DimensionProbs" ~ "Probability",
+    Predictor == "Risk_DimensionSever" ~ "Consequence",
+    Predictor == "CombinedPoliticalValue:Risk_DimensionProbs" ~ "Political Orientation × Probability",
+    Predictor == "CombinedPoliticalValue:Risk_DimensionSever" ~ "Political Orientation × Consequence",
+    TRUE ~ Predictor
+  )) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# APA-Tabelle erstellen
+apa_table_us_dim <- fixed_effects_us_dim %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Tabelle anzeigen
+apa_table_us_dim
+
+# Tabelle speichern
+gtsave(apa_table_us_dim, "Mixed_Models_APA_model_germany_dimensions.png")
+
+```
+
+
+
+# 1.4 Domains Germany
+```{r pressure, echo=FALSE}
+
+
+# Germany Affect, Domain: Referenzgruppe festlegen
+
+# 1 Mixed Model mit Interaktion zwischen politischer Orientierung und Domain
+model_pol_domain <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain_f + (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_de, 
+  subset = Risk_Dimension_f == "Affect",# oder _us, je nach Land
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+#  Zusammenfassung der Fixed Effects anzeigen
+summary(model_pol_domain)
+
+# Marginale Effekte (Steigungen) pro Domain berechnen
+#install.packages("emmeans")
+#library(emmeans)
+
+
+# Steigungen (Simple Slopes) pro Domain
+#slopes_domain <- emtrends(model_pol_domain, var = "CombinedPoliticalValue", specs = "Risk_Domain")
+#summary(slopes_domain)
+
+# -> Bei Nature ist die Steigung fast null
+
+# Referenzgruppe für Domain fixieren
+df_3_tresh_cleaned_long_de$Risk_Domain_f <- as.factor(df_3_tresh_cleaned_long_de$Risk_Domain)
+
+df_3_tresh_cleaned_long_de$Risk_Domain_f <- relevel(df_3_tresh_cleaned_long_de$Risk_Domain_f, ref = "Nature")
+
+```
+
+
+# Domains Germany Table
+
+```{r pressure, echo=FALSE}
+
+ # Fixed effects extrahieren
+fixed_effects_domain <- tidy(model_pol_domain, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  # Schöne Beschriftungen
+  mutate(Predictor = str_replace_all(Predictor, "CombinedPoliticalValue", "Political Orientation"),
+         Predictor = str_replace_all(Predictor, "Risk_Domain_f", ""),
+         Predictor = str_replace_all(Predictor, ":", " x "),
+         Predictor = case_when(
+           Predictor == "(Intercept)" ~ "Intercept",
+           TRUE ~ Predictor
+         )) %>%
+  # Signifikanz-Sterne
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+#  APA-Tabelle erstellen
+apa_mixed_table_domain <- fixed_effects_domain %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+#  Tabelle anzeigen
+apa_mixed_table_domain
+
+#  Optional: speichern
+gtsave(apa_mixed_table_domain, "Mixed_Models_APA_model_domains.png")
+
+```
+
+
+# Domains USA
+```{r pressure, echo=FALSE}
+
+# Daten als Faktor definieren
+df_3_tresh_cleaned_long_us$Risk_Domain_f <- as.factor(df_3_tresh_cleaned_long_us$Risk_Domain)
+
+#  Referenzlevel festlegen (Nature)
+df_3_tresh_cleaned_long_us$Risk_Domain_f <- relevel(df_3_tresh_cleaned_long_us$Risk_Domain_f, ref = "Health")
+
+#  Mixed Model mit Interaktion zwischen politischer Orientierung und Domain
+model_pol_domain_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain_f + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_us,
+  subset = Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+# Fixed Effects zusammenfassen
+summary(model_pol_domain_us)
+
+#  Marginale Effekte (Slopes) pro Domain berechnen
+#library(emmeans)
+slopes_domain_us <- emtrends(model_pol_domain_us, var = "CombinedPoliticalValue", specs = "Risk_Domain_f")
+summary(slopes_domain_us)
+
+
+```
+
+# Table USA
+
+```{r pressure, echo=FALSE}
+
+# Extract fixed effects
+fixed_effects_us_domains <- tidy(model_pol_domain_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+    mutate(Predictor = str_replace_all(Predictor, "CombinedPoliticalValue", "Political Orientation"),
+    Predictor = str_replace_all(Predictor, "Risk_Domain_f", ""),
+    Predictor = str_replace_all(Predictor, ":", " x "),
+    Predictor = case_when(
+      Predictor == "(Intercept)" ~ "Intercept",
+      TRUE ~ Predictor
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_us_domains <- fixed_effects_us_domains %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_us_domains
+
+# Save table
+gtsave(apa_table_us_domains, "Mixed_Models_US_Domains_APA.png")
+
+```
+
+
+```{r pressure, echo=FALSE}
+
+# Referenzgruppe fixieren
+df_3_tresh_cleaned_long$Risk_f <- relevel(df_3_tresh_cleaned_long$Risk_f, ref = "")
+df_3_tresh_cleaned_long_us$Risk_f <- relevel(df_3_tresh_cleaned_long_us$Risk_f, ref = "")
+df_3_tresh_cleaned_long_de$Risk_f <- relevel(df_3_tresh_cleaned_long_de$Risk_f, ref = "")
+
+
+
+# Mixed Model Domain USA
+model_domains_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain + (1 | id),
+  data = df_3_tresh_cleaned_long_us,
+  subset = Risk_Dimension_f == "Affect"
+  
+)
+
+summary(model_domains_us)
+
+
+# Mixed Model Domain Germany
+model_domains_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain + (1 | id),
+  data = df_3_tresh_cleaned_long_de,
+  subset = Risk_Dimension_f == "Affect"
+  
+)
+
+summary(model_domains_de)
+
+```
+
+
+
+## 1.5 USA Komplexes Modell (12 risks)
+```{r pressure, echo=FALSE}
+
+# Referenzrisiko festlegen
+
+slopes_risk <- emtrends(model_pol_risk_us, var = "CombinedPoliticalValue", specs = "Risk_f")
+summary(slopes_risk)
+
+
+# Optional: Referenz festlegen
+df_3_tresh_cleaned_long_us$Risk_f <- relevel(df_3_tresh_cleaned_long_us$Risk_f, ref = "Terrorism")
+
+
+
+
+# Modell wo ich brauchte für USA: Einfluss Politischer Orientierung auf einzelne Risks
+model_pol_risk_us <- lmer(Rating ~ CombinedPoliticalValue * Risk_f + 
+                     (1 + CombinedPoliticalValue| id), 
+                     data = df_3_tresh_cleaned_long_us, 
+                     subset = Risk_Dimension_f == "Affect",
+ control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(model_pol_risk_us)
+
+
+```
+# Table USA Risk Types
+
+```{r pressure, echo=FALSE}
+
+# Extract intercept + interaction terms from the model for 12 risk types
+fixed_effects_us_risks_inter <- tidy(model_pol_risk_us, effects = "fixed") %>%
+  filter(term == "(Intercept)" | str_detect(term, "CombinedPoliticalValue:Risk_f")) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    # Clean predictor names and make them readable
+    Predictor = case_when(
+      Predictor == "(Intercept)"            ~ "Intercept",
+      str_detect(Predictor, "CombinedPoliticalValue:Risk_f") ~ str_replace(Predictor, "CombinedPoliticalValue:Risk_f", ""),
+      TRUE ~ Predictor
+    ),
+    Predictor = case_when(
+      Predictor == "ClimateChange"      ~ "Political Orientation x Climate Change",
+      Predictor == "EconCrisis"        ~ "Political Orientation x Economic Crisis",
+      Predictor == "GunViol"           ~ "Political Orientation x Gun Violence",
+      Predictor == "IllegImmigrat"     ~ "Political Orientation x Illegal Immigration",
+      Predictor == "MentHealthProb"    ~ "Political Orientation x Mental Health Problems",
+      Predictor == "NaturalDisast"     ~ "Political Orientation x Natural Disaster",
+      Predictor == "NuclPowerPlant"    ~ "Political Orientation x Nuclear Power Plant Incident",
+      Predictor == "PolitCorrupt"      ~ "Political Orientation x Political Corruption",
+      Predictor == "SexAssault"        ~ "Political Orientation x Sexual Assault",
+      Predictor == "Vaccination"       ~ "Political Orientation x Vaccination Side Effects",
+      Predictor == "ViralPandemic"     ~ "Political Orientation x Viral Pandemic",
+      TRUE                             ~ Predictor
+    ),
+    # APA-style p-values
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_us_risks_inter <- fixed_effects_us_risks_inter %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_us_risks_inter
+
+# Save table
+gtsave(apa_table_us_risks_inter, "Mixed_Models_US_RiskTypes_Interactions_APA_withIntercept.png")
+
+```
+
+## 1.6 Germany Komplexes Modell (12 risks)
+```{r pressure, echo=FALSE}
+
+
+# Referenzrisiko festlegen
+
+slopes_risk <- emtrends(model_pol_risk_de, var = "CombinedPoliticalValue", specs = "Risk_f")
+summary(slopes_risk)
+
+
+# Optional: Referenz festlegen
+df_3_tresh_cleaned_long_de$Risk_f <- relevel(df_3_tresh_cleaned_long_de$Risk_f, ref = "NuclPowerPlant")
+
+
+
+# Modell wo ich brauchte für Germany: Einfluss Politischer Orientierung auf einzelne Risks
+
+model_pol_risk_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f + (1 + CombinedPoliticalValue | id), 
+  data = df_3_tresh_cleaned_long_de,
+  subset = Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(model_pol_risk_de)
+
+```
+
+
+
+# Table Germany Risk Types
+
+```{r pressure, echo=FALSE}
+
+# Extract fixed effects from German model, keep intercept and interactions
+fixed_effects_de_risks_inter <- tidy(model_pol_risk_de, effects = "fixed") %>%
+  filter(str_detect(term, "CombinedPoliticalValue:Risk_f") | term == "(Intercept)") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = str_replace(Predictor, "CombinedPoliticalValue:Risk_f", ""),
+    Predictor = case_when(
+      Predictor == "(Intercept)" ~ "Intercept",
+      Predictor == "ClimateChange"      ~ "Political Orientation x Climate Change",
+      Predictor == "EconCrisis"        ~ "Political Orientation x Economic Crisis",
+      Predictor == "GunViol"           ~ "Political Orientation x Gun Violence",
+      Predictor == "IllegImmigrat"     ~ "Political Orientation x Illegal Immigration",
+      Predictor == "MentHealthProb"    ~ "Political Orientation x Mental Health Problems",
+      Predictor == "NaturalDisast"     ~ "Political Orientation x Natural Disaster",
+      Predictor == "NuclPowerPlant"    ~ "Political Orientation x Nuclear Power Plant Incident",
+      Predictor == "PolitCorrupt"      ~ "Political Orientation x Political Corruption",
+      Predictor == "SexAssault"        ~ "Political Orientation x Sexual Assault",
+      Predictor == "Terrorism"         ~ "Political Orientation x Terrorism",
+      Predictor == "Vaccination"       ~ "Political Orientation x Vaccination Side Effects",
+      Predictor == "ViralPandemic"     ~ "Political Orientation x Viral Pandemic",
+      TRUE                             ~ Predictor
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_de_risks_inter <- fixed_effects_de_risks_inter %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_de_risks_inter
+
+# Save table as PNG
+gtsave(apa_table_de_risks_inter, "Mixed_Models_German_RiskTypes_Interactions_APA.png")
+
+
+```
+# Test mit Polit x Risk x Gender Germany
+```{r pressure, echo=FALSE}
+model_pol_risk_gender_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * gender + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_de, 
+  subset = gender %in% c("Male", "Female") & Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+
+summary(model_pol_risk_gender_de)
+
+```
+ Table Polit x Risk x Gender Germany
+
+```{r pressure, echo=FALSE}
+
+
+# Extrahiere fixe Effekte und filtere auf Intercept + 3-Wege-Interaktion
+fixed_effects_gender_de <- tidy(model_pol_risk_gender_de, effects = "fixed") %>%
+  filter(term == "(Intercept)" |
+         term == "CombinedPoliticalValue:Risk_fTerrorism:genderMale") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = case_when(
+      Predictor == "(Intercept)" ~ "Intercept",
+      Predictor == "CombinedPoliticalValue:Risk_fTerrorism:genderMale" ~
+        "Political Orientation × Terrorism × Male",
+      TRUE ~ Predictor
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# APA-Style Tabelle
+apa_table_gender_de <- fixed_effects_gender_de %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Tabelle anzeigen
+apa_table_gender_de
+
+# Optional speichern als PNG
+gtsave(apa_table_gender_de, "Mixed_Models_Germany_GenderInteraction_APA.png")
+
+
+
+```
+
+
+# Test Polit x Risk x Gender USA
+
+```{r pressure, echo=FALSE}
+model_pol_risk_gender_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * gender + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_us, 
+  subset = gender %in% c("Male", "Female") & Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+
+summary(model_pol_risk_gender_us)
+
+
+```
+
+
+# Test Polit x Risk x Age Germany
+
+```{r pressure, echo=FALSE}
+model_pol_risk_age_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * age + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_de, 
+  subset = gender %in% c("Male", "Female") & Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+
+summary(model_pol_risk_age_de)
+
+```
+
+# Table Polit x Risk x Age Germany
+
+```{r pressure, echo=FALSE}
+
+
+# Extract fixed effects, keep intercept and only significant age interactions
+fixed_effects_de_age_sig <- tidy(model_pol_risk_age_de, effects = "fixed") %>%
+  filter(term == "(Intercept)" | (str_detect(term, "CombinedPoliticalValue:Risk_f.*:age") & p.value < 0.05)) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = str_replace(Predictor, "CombinedPoliticalValue:Risk_f", ""),
+    Predictor = str_replace(Predictor, ":age", ""),
+    Predictor = case_when(
+      Predictor == "(Intercept)" ~ "Intercept",
+      Predictor == "IllegImmigrat"     ~ "Political Orientation x Illegal Immigration x Age",
+      Predictor == "MentHealthProb"    ~ "Political Orientation x Mental Health Problems x Age",
+      Predictor == "PolitCorrupt"      ~ "Political Orientation x Political Corruption x Age",
+      Predictor == "SexAssault"        ~ "Political Orientation x Sexual Assault x Age",
+      Predictor == "Terrorism"         ~ "Political Orientation x Terrorism x Age",
+      TRUE                             ~ Predictor
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_de_age_sig <- fixed_effects_de_age_sig %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_de_age_sig
+
+# Save table as PNG
+gtsave(apa_table_de_age_sig, "Mixed_Models_German_RiskTypes_Age_Significant_APA.png")
+
+
+
+
+
+
+```
+
+
+# Test Polit x Risk x Age USA
+
+```{r pressure, echo=FALSE}
+model_pol_risk_age_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * age + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_us, 
+  subset = gender %in% c("Male", "Female") & Risk_Dimension_f == "Affect",
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+
+summary(model_pol_risk_age_us)
+
+# Results:
+#Signifikante dreifache Interaktionen:
+
+#Risiko	β	p	Interpretation
+#Climate Change	-0.0097	< .001	Für konservativere Ältere ist das Klimarisiko geringer wahrgenommen.
+#Gun Violence	-0.0053	.005	Für konservativere Ältere wird Gewaltrisiko etwas geringer wahrgenommen.
+#Natural Disasters	-0.0045	.015	Konservativere Ältere nehmen Naturkatastrophenrisiko etwas geringer wahr.
+#Nuclear Power Plant	-0.0045	.016	Gleiches Muster: konservativere ältere Personen sehen Risiko geringer.
+#Viral Pandemic	-0.0050	.007	Ältere konservative Personen nehmen Pandemie-Risiko geringer wahr.
+
+#→ Fazit: Das Zusammenspiel von Alter und politischer Orientierung beeinflusst, wie bestimmte Risiken wahrgenommen werden. Ältere konservative Teilnehmer neigen dazu, bestimmte Risiken geringer einzuschätzen (z. B. Klimawandel, Katastrophen, Pandemie).
+
+#Alter × Political Orientation zeigt, dass ältere konservative Personen tendenziell einige Risiken geringer einschätzen, vor allem Umwelt- und Gesundheitsrisiken.
+
+#Vergleich zum deutschen Sample:
+
+#In Deutschland war Alter stärker direkt mit einer verringerten Risikowahrnehmung verbunden.
+
+#In den USA zeigen sich differenziertere, risikoabhängige Alters- und Politikinteraktionen.
+
+```
+# Table Polit x Risk x Age USA
+
+```{r pressure, echo=FALSE}
+
+# Extract fixed effects, keep intercept and only significant age interactions
+fixed_effects_us_age_sig <- tidy(model_pol_risk_age_us, effects = "fixed") %>%
+  filter(term == "(Intercept)" | (str_detect(term, "CombinedPoliticalValue:Risk_f.*:age") & p.value < 0.05)) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = str_replace(Predictor, "CombinedPoliticalValue:Risk_f", ""),
+    Predictor = str_replace(Predictor, ":age", ""),
+    Predictor = case_when(
+      Predictor == "(Intercept)" ~ "Intercept",
+      Predictor == "ClimateChange"   ~ "Political Orientation x Climate Change x Age",
+      Predictor == "GunViol"        ~ "Political Orientation x Gun Violence x Age",
+      Predictor == "NaturalDisast"  ~ "Political Orientation x Natural Disasters x Age",
+      Predictor == "NuclPowerPlant" ~ "Political Orientation x Nuclear Power Plant Incident x Age",
+      Predictor == "ViralPandemic"  ~ "Political Orientation x Viral Pandemic x Age",
+      TRUE                           ~ Predictor
+    ),
+      p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table
+apa_table_us_age_sig <- fixed_effects_us_age_sig %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(24),
+    column_labels.font.weight = "bold"
+  )
+
+# Print table
+apa_table_us_age_sig
+
+# Save table as PNG
+gtsave(apa_table_us_age_sig, "Mixed_Models_US_RiskTypes_Age_Significant_APA.png")
+
+
+```
+
+
+# Test Polit x Risk x Edu USA (Reference category Some college)
+
+```{r pressure, echo=FALSE}
+
+# 1. Education als Faktor nominal (keine Polynom-Codierung)
+df_3_tresh_cleaned_long_us$education_f <- factor(
+  df_3_tresh_cleaned_long_us$education,
+  levels = c(
+    "No formal school education", "Less than high school", "High school diploma", 
+    "some college", "Bachelor’s degree", "Master’s degree", "Doctoral degree", "Other"
+  ),
+  ordered = FALSE
+)
+
+# 2. Kontraste explizit setzen auf "Treatment Coding" -> zuerst Referenz durchführen
+contrasts(df_3_tresh_cleaned_long_us$education_f) <- contr.treatment(8)
+
+# 3. Referenz auf "Some college" setzen
+df_3_tresh_cleaned_long_us$education_f <- relevel(
+  df_3_tresh_cleaned_long_us$education_f, 
+  ref = "some college"
+)
+
+# 4. Mixed Effects Modell
+model_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * education_f + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_us %>% 
+         filter(gender %in% c("Male", "Female"),
+                Risk_Dimension_f == "Affect"),
+  REML = TRUE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(model_us)
+
+# 5. Zusammenfassung speichern
+sum_model_us <- summary(model_us)
+
+# 6. Alle Koeffizienten extrahieren
+coef_df_us <- as.data.frame(sum_model_us$coefficients)
+
+# 7. Nur Dreifachinteraktionen (CombinedPoliticalValue:Risk_f:education_f) herausfiltern
+triple_int_us <- coef_df_us[grep("CombinedPoliticalValue:Risk_f.*:education_f", rownames(coef_df_us)), ]
+
+# 8. Optional: Nur signifikante Interaktionen (p < 0.05)
+signif_triple_us <- triple_int_us %>%
+  rownames_to_column(var = "term") %>%
+  filter(`Pr(>|t|)` < 0.05) %>%
+  arrange(desc(abs(Estimate)))
+
+# Ergebnis anzeigen
+signif_triple_us
+
+
+```
+
+
+# Table Polit x Risk x Edu USA (Referenz Some college)
+
+```{r pressure, echo=FALSE}
+
+
+# Extrahiere signifikante dreifachinteraktionen für USA
+fixed_effects_edu_us_sig <- tidy(model_us, effects = "fixed") %>%
+  filter(term == "(Intercept)" | (str_detect(term, "CombinedPoliticalValue:Risk_f.*:education_f") & p.value < 0.05)) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = case_when(
+      term == "(Intercept)" ~ "Intercept",
+      TRUE ~ term %>%
+              str_remove("CombinedPoliticalValue:Risk_f") %>%
+              str_replace(":education_f", " × ") %>%
+              str_replace_all("IllegImmigrat", "Illegal Immigration") %>%
+              str_replace_all("MentHealthProb", "Mental Health Problems") %>%
+              str_replace_all("PolitCorrupt", "Political Corruption") %>%
+              str_replace_all("SexAssault", "Sexual Assault") %>%
+         str_replace_all("EconCrisis", "Economic Crisis") %>%
+              str_replace_all("Terrorism", "Terrorism") %>%
+              str_replace_all("GunViol", "Gun Violence") %>%
+              str_replace_all("NaturalDisast", "Natural Disasters") %>%
+              str_replace_all("Vaccination", "Vaccination") %>%
+              str_replace_all("ViralPandemic", "Viral Pandemic") %>%
+              str_replace_all("ClimateChange", "Climate Change") %>%
+              str_replace_all("NuclPowerPlant", "Nuclear Power Plant") %>%
+              str_replace_all("Bachelor’s degree", "Bachelor's degree") %>%
+              str_replace_all("Master’s degree", "Master's degree") %>%
+              str_replace_all("Doctoral degree", "Doctorate") %>%
+              str_replace_all("Less than high school", "Less than High School") %>%
+              str_replace_all("High school diploma", "High School Diploma") %>%
+              paste0("Political Orientation × ", .)
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# APA-Tabelle erstellen
+apa_table_edu_us_sig <- fixed_effects_edu_us_sig %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  cols_width(
+    Predictor ~ pct(60),
+    Beta ~ pct(10),
+    SE ~ pct(10),
+    t ~ pct(10),
+    p_star ~ pct(10)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(20),
+    column_labels.font.weight = "bold",
+    table.layout = "auto"
+  )
+
+# Tabelle anzeigen
+apa_table_edu_us_sig
+
+# Tabelle speichern
+gtsave(apa_table_edu_us_sig, "Mixed_Models_US_RiskTypes_Education_Significant_APA.png")
+
+```
+
+
+# Test Polit x Risk x Edu Germany (Referenz High school diplomas)
+
+```{r pressure, echo=FALSE}
+
+# 1. Education als Faktor nominal (keine Polynom-Codierung)
+df_3_tresh_cleaned_long_de$education_f <- factor(
+  df_3_tresh_cleaned_long_de$education,
+  levels = c(
+    "No formal school education", "Less than high school", "High school diploma", 
+    "some college", "Bachelor’s degree", "Master’s degree", "Doctoral degree", "Other"
+  )
+)
+
+# 2. Kontraste explizit setzen auf "Treatment Coding"
+contrasts(df_3_tresh_cleaned_long_de$education_f) <- contr.treatment(8)
+
+# 3. Prüfen
+contrasts(df_3_tresh_cleaned_long_de$education_f)
+
+# Setze "High school diploma" als Referenz (meisten Werte)
+df_3_tresh_cleaned_long_de$education_f <- factor(
+  df_3_tresh_cleaned_long_de$education,
+  levels = c(
+    "No formal school education", "Less than high school", "High school diploma", 
+    "some college", "Bachelor’s degree", "Master’s degree", "Doctoral degree", "Other"
+  ),
+  ordered = FALSE
+)
+
+# Referenz setzen
+df_3_tresh_cleaned_long_de$education_f <- relevel(
+  df_3_tresh_cleaned_long_de$education_f, 
+  ref = "High school diploma"
+)
+
+
+# 4. Modell wie vorher
+model_pol_risk_edu_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_f * education_f + 
+    (1 + CombinedPoliticalValue | id),
+  data = df_3_tresh_cleaned_long_de %>% 
+         filter(gender %in% c("Male", "Female"),
+                Risk_Dimension_f == "Affect"),
+  REML = TRUE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(model_pol_risk_edu_de)
+
+
+
+# Summary speichern
+sum_model <- summary(model)
+
+# Alle Koeffizienten
+coefs <- sum_model$coefficients
+
+# Nur die dreifachen Interaktionen herausfiltern
+tripple_interactions <- coefs[grep("CombinedPoliticalValue:Risk_f:education_f", rownames(coefs)), ]
+
+tripple_interactions
+
+
+
+
+# summary des Modells
+mod_sum <- summary(model)
+
+# alle Koeffizienten in ein DataFrame
+coef_df <- as.data.frame(mod_sum$coefficients)
+
+# nur die Dreifachinteraktionen (haben genau zwei Doppelpunkte ":" im Namen)
+triple_int <- coef_df[grep(":", rownames(coef_df), fixed = TRUE), ]
+triple_int <- triple_int[sapply(strsplit(rownames(triple_int), ":"), length) == 3, ]
+
+# Ergebnis anzeigen
+triple_int
+
+
+
+# 1. Alle Koeffizienten aus dem Modell extrahieren
+coef_table <- summary(model)$coefficients
+
+# 2. Nur die Dreifachinteraktionen (CombinedPoliticalValue:Risk_f:education_f) filtern
+triple_int <- coef_table %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "term") %>%
+  filter(grepl("CombinedPoliticalValue:Risk_f.*:education_f", term))
+
+# 3. Nur signifikante Interaktionen (z.B. p < 0.05)
+signif_triple <- triple_int %>%
+  filter(`Pr(>|t|)` < 0.05)
+
+# 4. Sortieren nach Effektgröße (optional)
+signif_triple <- signif_triple %>%
+  arrange(desc(abs(Estimate)))
+
+signif_triple
+
+
+
+```
+
+# Table Polit x Risk x Edu Germany (Referenz High school diplomas)
+
+```{r, fig.width=11, fig.height=8}
+
+
+fixed_effects_edu_sig <- tidy(model, effects = "fixed") %>%
+  filter(term == "(Intercept)" | (str_detect(term, "CombinedPoliticalValue:Risk_f.*:education_f") & p.value < 0.05)) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(
+    Predictor = case_when(
+      term == "(Intercept)" ~ "Intercept",
+      TRUE ~ term %>%
+              str_remove("CombinedPoliticalValue:Risk_f") %>%
+              str_replace(":education_f", " × ") %>%
+              str_replace_all("IllegImmigrat", "Illegal Immigration") %>%
+              str_replace_all("MentHealthProb", "Mental Health Problems") %>%
+              str_replace_all("PolitCorrupt", "Political Corruption") %>%
+              str_replace_all("SexAssault", "Sexual Assault") %>%
+              str_replace_all("Terrorism", "Terrorism") %>%
+              str_replace_all("GunViol", "Gun Violence") %>%
+              str_replace_all("NaturalDisast", "Natural Disasters") %>%
+              str_replace_all("Vaccination", "Vaccination") %>%
+              str_replace_all("ViralPandemic", "Viral Pandemic") %>%
+              str_replace_all("ClimateChange", "Climate Change") %>%
+              str_replace_all("NuclPowerPlant", "Nuclear Power Plant") %>%
+              str_replace_all("Bachelor’s degree", "Bachelor's degree") %>%
+              str_replace_all("Master’s degree", "Master's degree") %>%
+              str_replace_all("Doctorate", "Doctorate") %>%
+              str_replace_all("No formal school education", "No formal school education") %>%
+              str_replace_all("HighSchool", "High School") %>%
+              paste0("Political Orientation × ", .)
+    ),
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p,3), " **"),
+      p < 0.05  ~ paste0(round(p,3), " *"),
+      TRUE      ~ as.character(round(p,3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+
+# APA-Tabelle erstellen
+apa_table_edu_sig <- fixed_effects_edu_sig %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(align = "center", columns = c(Beta, SE, t, p_star)) %>%
+  cols_width(
+    Predictor ~ pct(60),
+    Beta ~ pct(10),
+    SE ~ pct(10),
+    t ~ pct(10),
+    p_star ~ pct(10)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(18),
+    column_labels.font.weight = "bold",
+    table.layout = "auto"  # automatisch Spaltenbreite
+  )
+
+
+# Tabelle anzeigen
+apa_table_edu_sig
+
+# Tabelle speichern
+gtsave(apa_table_edu_sig, "Mixed_Models_German_RiskTypes_Education_Significant_APA.png")
+
+
+
+```
+
+
+
+## 1.7 Mixed-effects Model Country differences
+
+Fragen:
+
+- Welche Risiken sind generell politisiert? / Für welche Risiken zeigt sich ein besonders starker Einfluss der politischen Orientierung auf die Risikowahrnehmung?
+
+Ist ein Ranking möglich? Deutschland
+CombinedPoliticalValue:Risk_f
+
+
+- Unterscheidet sich der politische Einfluss zwischen den Ländern? Interaktion mit dem Land
+Je negativer der Wert, desto weniger stärker politisiert/ist der Einfluss von politischer Orientierung auf das Risiko in den USA? Interaktionen:CountryUS
+
+```{r pressure, echo=FALSE}
+model_with_country_interaction <- lmer(Rating ~ CombinedPoliticalValue:Risk_f * Country + (1 | id), data = df_3_tresh_cleaned_long,
+                    subset = Risk_Dimension_f == "Affect")
+
+summary(model_with_country_interaction)
+```
+
+
+
+
+
+
+
+## USA Table Komplexes Modell
+```{r pressure, echo=FALSE}
+# Extrahiere die fixen Effekte für das Affect USA Modell und filtere nur die Interaktionsterme
+fixed_effects_affect_us <- tidy(model_affect_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  filter(str_detect(term, "CombinedPoliticalValue:Risk_f")) %>%  # Nur Interaktionsterme filtern
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  # Ersetze "CombinedPoliticalValue:Risk_f" mit einer ansprechenderen Bezeichnung
+  mutate(Predictor = str_replace(Predictor, ":", " x ")) %>%
+  mutate(Predictor = case_when(
+    str_detect(Predictor, "Risk_fClimateChange") ~ "Climate Change",
+    str_detect(Predictor, "Risk_fNaturalDisast") ~ "Natural Disaster",
+    str_detect(Predictor, "Risk_fGunViol") ~ "Gun Violence",
+    str_detect(Predictor, "Risk_fIllegImmigrat") ~ "Illegal Immigration",
+    str_detect(Predictor, "Risk_fMentHealthProb") ~ "Mental Health Problems",
+    str_detect(Predictor, "Risk_fNuclPowerPlant") ~ "Nuclear Power Plants",
+    str_detect(Predictor, "Risk_fPolitCorrupt") ~ "Political Corruption",
+    str_detect(Predictor, "Risk_fSexAssault") ~ "Sexual Assault",
+    str_detect(Predictor, "Risk_fTerrorism") ~ "Terrorism",
+    str_detect(Predictor, "Risk_fVaccination") ~ "Vaccination Side Effects",
+    str_detect(Predictor, "Risk_fViralPandemic") ~ "Viral Pandemics",
+    TRUE ~ Predictor
+  )) %>%
+  # p-Wert-Sterne hinzufügen
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Erstelle die APA-Stil-Tabelle für die Affect USA Interaktionsterme mit ausgeschriebenen Risiken
+apa_mixed_table_affect_us <- fixed_effects_affect_us %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Ausgabe der Tabelle für Affect USA mit ausgeschriebenen Risikobegriffen
+apa_mixed_table_affect_us
+
+# Speichern der Tabelle als PNG-Datei
+gtsave(apa_mixed_table_affect_us, "Mixed_Models_APA_model_affect_us_interactions_full_names.png")
+
+
+
+
+
+
+```
+
+##  Table USA
+```{r pressure, echo=FALSE}
+# Extract fixed effects from the USA model
+fixed_effects_usa <- tidy(model_pol_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = str_replace(Predictor, ":", " x "),
+         Predictor = str_replace(Predictor, "CountryUS", "USA")) %>%
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    TRUE ~ Predictor
+  )) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table with significance stars for USA
+apa_mixed_table_usa <- fixed_effects_usa %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print the table for USA
+apa_mixed_table_usa
+
+# Save the table to a file
+gtsave(apa_mixed_table_usa, "Mixed_Models_APA_model_usa.png")
+
+```
+## Germany Komplexes Modell (12 risks)
+```{r pressure, echo=FALSE}
+# Modell wo ich brauchte für USA: Einfluss Politischer Orientierung auf einzelne Risks
+model_affect_de <- lmer(Rating ~ CombinedPoliticalValue * Risk_f + 
+                     (1 | id), 
+                     data = df_3_tresh_cleaned_long_de,
+                    subset = Risk_Dimension_f == "Affect")
+summary(model_affect_de)
+
+```
+## Mixed-effects Model Country differences
+```{r pressure, echo=FALSE}
+model_with_country_interaction <- lmer(Rating ~ CombinedPoliticalValue:Risk_f * Country + (1 | id), data = df_3_tresh_cleaned_long,
+                    subset = Risk_Dimension_f == "Affect")
+
+summary(model_with_country_interaction)
+```
+
+
+## Table Interaction * Country Effects
+```{r pressure, echo=FALSE}
+# Deine Daten
+interaction_effects <- data.frame(
+  Risk = c("NaturalDisast", "ClimateChange", "EconCrisis", "GunViol", "IllegImmigrat", 
+           "MentHealthProb", "NuclPowerPlant", "PolitCorrupt", "SexAssault", "Terrorism", 
+           "Vaccination", "ViralPandemic"),
+  Effect = c(-0.2076, -0.3412, -0.2670, -0.3125, -0.4101, -0.2489, -0.2448, -0.1682, 
+             -0.3107, -0.3403, -0.2462, -0.2012),
+  p_value = c(1.30e-12, 2.00e-16, 2.00e-16, 2.00e-16, 2.00e-16, 2.00e-16, 2.00e-16, 
+              8.91e-09, 2.00e-16, 2.00e-16, 2.00e-16, 6.17e-12)
+)
+
+interaction_effects$significant <- interaction_effects$p_value < 0.05
+
+# Sort by absolute effect size
+interaction_effects$Risk <- factor(
+  interaction_effects$Risk,
+  levels = interaction_effects$Risk[order(abs(interaction_effects$Effect), decreasing = TRUE)]
+)
+
+# Clean English labels
+risk_labels <- c(
+  "NaturalDisast" = "Natural Disasters",
+  "ClimateChange" = "Climate Change",
+  "EconCrisis" = "Economic Crisis",
+  "GunViol" = "Gun Violence",
+  "IllegImmigrat" = "Illegal Immigration",
+  "MentHealthProb" = "Mental Health Issues",
+  "NuclPowerPlant" = "Nuclear Power",
+  "PolitCorrupt" = "Political Corruption",
+  "SexAssault" = "Sexual Assault",
+  "Terrorism" = "Terrorism",
+  "Vaccination" = "Vaccination Side Effects",
+  "ViralPandemic" = "Viral Pandemic"
+)
+
+# Plot
+ggplot(interaction_effects, aes(x = Risk, y = Effect, fill = significant)) +
+  geom_col(width = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  scale_x_discrete(labels = risk_labels) +
+  scale_fill_manual(values = c("TRUE" = "lightblue", "FALSE" = "gray")) +
+  labs(
+    x = "Risk",
+    y = "Interaction Effect (β)",
+    fill = "Significant"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12)
+  )
+
+
+
+
+```
+
+
+
+## Political Orientation and Demographics
+```{r pressure, echo=FALSE}
+# Modell mit Interaktionen von politischer Orientierung mit Alter, Geschlecht und Bildung
+model_interactions_demographics <- lmer(Rating ~ CombinedPoliticalValue * age_group + (1 | id), data = df_3_tresh_cleaned_long)
+
+# Zusammenfassung des Modells
+summary(model_interactions_demographics)
+
+# age group
+df_3_tresh_cleaned_long <- df_3_tresh_cleaned_long %>%
+  mutate(age_group = case_when(
+    age >= 18 & age <= 29 ~ "18-29",
+    age >= 30 & age <= 44 ~ "30-44",
+    age >= 45 & age <= 59 ~ "45-59",
+    age >= 60 & age <= 74 ~ "60-74",
+    age >= 75 ~ "75+",
+    TRUE ~ "NA"  # Falls es Alterswerte außerhalb der definierten Gruppen gibt
+  ))
+```
+
+
+
+
+# Significant Risks Overview Germany
+```{r pressure, echo=FALSE}
+interaction_effects <- data.frame(
+  Risk = c("EconCrisis", "GunViol", "IllegImmigrat", "MentHealthProb", "NaturalDisast",
+           "NuclPowerPlant", "PolitCorrupt", "SexAssault", "Terrorism", "Vaccination", "ViralPandemic"),
+  Effect = c(0.4732, 0.4570, 0.8387, 0.3699, 0.2880, 0.2464, 0.4291, 0.4465, 0.5201, 0.5306, 0.3126),
+  p_value = c(0.0003, 2.5e-06, 0.236, 0.125, 0.142, 0.045, 3.8e-09, 0.145, 0.071, 0.185, 0.099)
+)
+
+interaction_effects$significant <- interaction_effects$p_value < 0.05
+
+ggplot(interaction_effects, aes(x = reorder(Risk, Effect), y = Effect, fill = significant)) +
+  geom_col() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    x = "Risk", 
+    y = "Effect (β)", 
+    fill = "Significant"
+  ) +
+  theme_minimal()
+
+```
+
+
+## Table Germany komplexes Modell
+```{r pressure, echo=FALSE}
+# Extrahiere die fixen Effekte für das Affect Deutschland Modell und filtere nur die Interaktionsterme
+fixed_effects_affect_de <- tidy(model_affect_de, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  filter(str_detect(term, "CombinedPoliticalValue:Risk_f")) %>%  # Nur Interaktionsterme filtern
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  # Ersetze "CombinedPoliticalValue:Risk_f" mit einer ansprechenderen Bezeichnung
+  mutate(Predictor = str_replace(Predictor, ":", " x ")) %>%
+  mutate(Predictor = case_when(
+    str_detect(Predictor, "Risk_fClimateChange") ~ "Climate Change",
+    str_detect(Predictor, "Risk_fNaturalDisast") ~ "Natural Disaster",
+    str_detect(Predictor, "Risk_fGunViol") ~ "Gun Violence",
+    str_detect(Predictor, "Risk_fIllegImmigrat") ~ "Illegal Immigration",
+    str_detect(Predictor, "Risk_fMentHealthProb") ~ "Mental Health Problems",
+    str_detect(Predictor, "Risk_fNuclPowerPlant") ~ "Nuclear Power Plants",
+    str_detect(Predictor, "Risk_fPolitCorrupt") ~ "Political Corruption",
+    str_detect(Predictor, "Risk_fSexAssault") ~ "Sexual Assault",
+    str_detect(Predictor, "Risk_fTerrorism") ~ "Terrorism",
+    str_detect(Predictor, "Risk_fVaccination") ~ "Vaccination Side Effects",
+    str_detect(Predictor, "Risk_fViralPandemic") ~ "Viral Pandemics",
+    TRUE ~ Predictor
+  )) %>%
+  # p-Wert-Sterne hinzufügen
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Erstelle die APA-Stil-Tabelle für die Affect Deutschland Interaktionsterme mit ausgeschriebenen Risiken
+apa_mixed_table_affect_de <- fixed_effects_affect_de %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Ausgabe der Tabelle für Affect Deutschland mit ausgeschriebenen Risikobegriffen
+apa_mixed_table_affect_de
+
+# Speichern der Tabelle als PNG-Datei
+gtsave(apa_mixed_table_affect_de, "Mixed_Models_APA_model_affect_de_interactions_full_names.png")
+
+```
+## Plot Country Difference (Affect)
+```{r, fig.width=12, fig.height=8}
+# Plot für die Affect-Dimension mit größeren Achsenbeschriftungen und Legende
+ggplot(df_affect, aes(x = CombinedPoliticalValue, y = Rating, color = Country)) +
+  geom_smooth(aes(group = Country), method = "loess", size = 1.2, se = FALSE) +  # Gruppieren nach Land
+  labs(x = "Political Orientation",
+       y = "Risk Perception", 
+       color = "Country") +  # Legenden-Titel für "Country" hinzufügen
+  facet_wrap(~ factor(Risk, 
+                     levels = c("Vaccination", "ViralPandemic", "MentHealthProb",  # Health
+                                "SexAssault", "GunViol", "Terrorism",  # Crime
+                                "ClimateChange", "NaturalDisast", "NuclPowerPlant",  # Nature
+                                "IllegImmigrat", "PolitCorrupt", "EconCrisis"),  # Social/Political
+                     labels = c("Vaccination Side Effects", 
+                                "Viral Pandemic", 
+                                "Mental Health Problems",
+                                "Sexual Assault",
+                                "Gun Violence",
+                                "Terrorism",
+                                "Climate Change",
+                                "Natural Disaster",
+                                "Nuclear Power Plant Incident",
+                                "Illegal Immigration",
+                                "Political Corruption",
+                                "Economic Crisis"))) +  # Risikonamen anpassen
+  scale_color_manual(values = c("DE" = "#4F81BD", "US" = "#E57373"), 
+                     labels = c("DE" = "Germany", "US" = "USA")) +  # Farben und Labels für DE und US
+  scale_x_continuous(breaks = seq(0, 10, by = 1)) +  # Setze die Achsenbeschriftungen alle 1 Einheit
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        strip.text = element_text(size = 14, face = "bold"),  # Größere Beschriftungen für Facetten
+        axis.text.x = element_text(size = 14),  # Größere x-Achsen-Beschriftung ohne Rotation
+        axis.text.y = element_text(size = 14),  # Größere y-Achsen-Beschriftung
+        axis.title.x = element_text(size = 16),  # Größere x-Achsen-Beschriftung (Label)
+        axis.title.y = element_text(size = 16),  # Größere y-Achsen-Beschriftung (Label)
+        legend.text = element_text(size = 14),  # Größere Legendenbeschriftung
+        legend.title = element_text(size = 16))  # Größerer Titel der Legende
+```
+
+
+## Dimensions and Political Orientation: US (and Severity)
+```{r pressure, echo=FALSE}
+# Mixed Model mit Interaktion zwischen Political Orientation und Dimension
+#model_pol_dim_interaction_us1 <- lmer(
+ # Rating ~ CombinedPoliticalValue * Risk_Dimension + (1 | id),
+#  data = df_3_tresh_cleaned_long_us
+#)
+
+model_pol_dim_interaction_us2 <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Dimension + (1 | id) + (1 | Risk_f),
+  data = df_3_tresh_cleaned_long_us
+  
+)
+# Zusammenfassung anzeigen
+summary(model_pol_dim_interaction_us2)
+
+# USA Severity Dimension
+model_sever <- lmer(Rating ~ CombinedPoliticalValue:Risk_f + (1 | id),
+  data = df_3_tresh_cleaned_long_us,
+  subset = Risk_Dimension_f == "Sever")
+
+
+summary(model_sever)
+
+# anova(model_pol_dim_interaction_us1, model_pol_dim_interaction_us2)
+
+```
+# Table Dimensions USA
+```{r pressure, echo=FALSE}
+# Extract fixed effects from the model, including all predictors and interactions
+fixed_effects_usa_full <- tidy(model_pol_dim_interaction_us2, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  mutate(Predictor = str_replace(Predictor, ":", " x "),
+         Predictor = str_replace(Predictor, "CountryUS", "USA")) %>%
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Combined Political Value",
+    Predictor == "Risk_DimensionProbs" ~ "Probability",
+    Predictor == "Risk_DimensionSever" ~ "Consequence",
+    Predictor == "CombinedPoliticalValue x Risk_DimensionProbs" ~ "Combined Political Value x Probability",
+    Predictor == "CombinedPoliticalValue x Risk_DimensionSever" ~ "Combined Political Value x Consequence",
+    TRUE ~ Predictor
+  )) %>%
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Create APA-style table with significance stars
+apa_mixed_table_usa_full <- fixed_effects_usa_full %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Print the table for the USA full model with renamed variables
+apa_mixed_table_usa_full
+
+# Save the table as a PNG file using gtsave
+gtsave(apa_mixed_table_usa_full, "Mixed_Models_USA_Full_Model_renamed_separated.png")
+
+
+
+```
+
+# Domains USA and Germany
+```{r pressure, echo=FALSE}
+
+model_domains_us <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain + (1 | id),
+  data = df_3_tresh_cleaned_long_us,
+  subset = Risk_Dimension_f == "Affect"
+  
+)
+
+summary(model_domains_us)
+
+
+
+model_domains_de <- lmer(
+  Rating ~ CombinedPoliticalValue * Risk_Domain + (1 | id),
+  data = df_3_tresh_cleaned_long_de,
+  subset = Risk_Dimension_f == "Affect"
+  
+)
+
+summary(model_domains_de)
+
+```
+# Table Domains USA
+```{r pressure, echo=FALSE}
+# Extrahiere die festen Effekte aus dem Modell
+fixed_effects_us_affect <- tidy(model_domains_us, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  # Ersetze ":" durch " x " und verbessere die Lesbarkeit der Namen
+  mutate(Predictor = str_replace(Predictor, ":", " x "),
+         Predictor = str_replace(Predictor, "Risk_Domain", "Risk Domain")) %>%
+  # Hier benennen wir alle relevanten Terme um, damit sie verständlicher sind
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Combined Political Value",
+    Predictor == "Risk_DomainHealth" ~ "Health Domain",
+    Predictor == "Risk_DomainNature" ~ "Nature Domain",
+    Predictor == "Risk_DomainSocial/Political" ~ "Social/Political Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainHealth" ~ "Combined Political Value x Health Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainNature" ~ "Combined Political Value x Nature Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainSocial/Political" ~ "Combined Political Value x Social/Political Domain",
+    TRUE ~ Predictor
+  )) %>%
+  # Formatieren der p-Werte für die Sterne
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Erstelle die APA-Style Tabelle mit den Signifikanz-Sternen und verbesserten Namen
+apa_mixed_table_us_affect <- fixed_effects_us_affect %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Zeige die Tabelle für das Modell mit den umbenannten Variablen
+apa_mixed_table_us_affect
+
+# Speichere die Tabelle als PNG-Datei
+gtsave(apa_mixed_table_us_affect, "Mixed_Models_US_Affect_Model_renamed_improved.png")
+
+```
+
+
+# Table Domains Germany
+```{r pressure, echo=FALSE}
+# Extrahiere die festen Effekte aus dem Modell für Deutschland
+fixed_effects_de_affect <- tidy(model_domains_de, effects = "fixed") %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Predictor = term,
+    Beta = estimate,
+    SE = std.error,
+    t = statistic,
+    p = p.value
+  ) %>%
+  # Ersetze ":" durch " x " und verbessere die Lesbarkeit der Namen
+  mutate(Predictor = str_replace(Predictor, ":", " x "),
+         Predictor = str_replace(Predictor, "Risk_Domain", "Risk Domain")) %>%
+  # Hier benennen wir alle relevanten Terme um, damit sie verständlicher sind
+  mutate(Predictor = case_when(
+    Predictor == "(Intercept)" ~ "Intercept",
+    Predictor == "CombinedPoliticalValue" ~ "Combined Political Value",
+    Predictor == "Risk_DomainHealth" ~ "Health Domain",
+    Predictor == "Risk_DomainNature" ~ "Nature Domain",
+    Predictor == "Risk_DomainSocial/Political" ~ "Social/Political Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainHealth" ~ "Combined Political Value x Health Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainNature" ~ "Combined Political Value x Nature Domain",
+    Predictor == "CombinedPoliticalValue x Risk_DomainSocial/Political" ~ "Combined Political Value x Social/Political Domain",
+    TRUE ~ Predictor
+  )) %>%
+  # Formatieren der p-Werte für die Sterne
+  mutate(
+    p_star = case_when(
+      p < 0.001 ~ "< .001 ***",
+      p < 0.01  ~ paste0(round(p, 3), " **"),
+      p < 0.05  ~ paste0(round(p, 3), " *"),
+      TRUE      ~ as.character(round(p, 3))
+    )
+  ) %>%
+  select(Predictor, Beta, SE, t, p_star)
+
+# Erstelle die APA-Style Tabelle mit den Signifikanz-Sternen und verbesserten Namen
+apa_mixed_table_de_affect <- fixed_effects_de_affect %>%
+  gt() %>%
+  cols_label(
+    Predictor = "Predictor",
+    Beta = md("*β*"),
+    SE = md("*SE*"),
+    t = md("*t*"),
+    p_star = md("*p*")
+  ) %>%
+  fmt_number(columns = c(Beta, SE, t), decimals = 3) %>%
+  cols_align(
+    align = "center",
+    columns = c(Beta, SE, t, p_star)
+  ) %>%
+  cols_width(
+    Beta ~ px(120),
+    SE ~ px(120),
+    t ~ px(120),
+    p_star ~ px(120)
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.font.names = "Arial",
+    table.font.size = px(25),
+    column_labels.font.weight = "bold"
+  )
+
+# Zeige die Tabelle für das Modell mit den umbenannten Variablen
+apa_mixed_table_de_affect
+
+# Speichere die Tabelle als PNG-Datei
+gtsave(apa_mixed_table_de_affect, "Mixed_Models_DE_Affect_Model_renamed_improved.png")
+
+```
+
+
+
+## Domains USA and GER
+```{r pressure, echo=FALSE}
+ggplot(df_affect, aes(x = CombinedPoliticalValue, y = Rating, color = Country)) +
+  geom_smooth(aes(group = Country), method = "loess", size = 1.2, se = FALSE) +  # Gruppieren nach Land
+  labs(x = "Political Orientation",
+       y = "Risk Perception", 
+       color = "Country") +  # Legenden-Titel für "Country" hinzufügen
+  facet_wrap(~ factor(Risk_Domain, 
+                     levels = c("Health", "Crime", "Nature", "Social/Political"),  # Risikodimensionen anpassen
+                     labels = c("Health Risks", 
+                                "Crime Risks", 
+                                "Nature Risks", 
+                                "Social/Political Risks"))) +  # Risikodimensionen-Labels anpassen
+  scale_color_manual(values = c("DE" = "#4F81BD", "US" = "#E57373"), 
+                     labels = c("DE" = "Germany", "US" = "USA")) +  # Farben und Labels für DE und US
+  scale_x_continuous(breaks = seq(0, 10, by = 1)) +  # Setze die Achsenbeschriftungen alle 1 Einheit
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        strip.text = element_text(size = 14, face = "bold"),  # Größere Beschriftungen für Facetten
+        axis.text.x = element_text(size = 14),  # Größere x-Achsen-Beschriftung ohne Rotation
+        axis.text.y = element_text(size = 14),  # Größere y-Achsen-Beschriftung
+        axis.title.x = element_text(size = 16),  # Größere x-Achsen-Beschriftung (Label)
+        axis.title.y = element_text(size = 16),  # Größere y-Achsen-Beschriftung (Label)
+        legend.text = element_text(size = 14),  # Größere Legendenbeschriftung
+        legend.title = element_text(size = 16))  # Größerer Titel der Legende
+```
+
+
+## Germany Komplexes Modell (12 risks)
+```{r pressure, echo=FALSE}
+# Modell wo ich brauchte für USA: Einfluss Politischer Orientierung auf einzelne Risks
+model_affect_us <- lmer(Rating ~ CombinedPoliticalValue * Risk_f + 
+                     (1 | id), 
+                     data = df_3_tresh_cleaned_long_us, 
+                     subset = Risk_Dimension_f == "Affect")
+summary(model_affect_us)
+```
+
+## Interaction Country
+```{r pressure, echo=FALSE}
+model_with_country_interaction <- lmer(Rating ~ CombinedPoliticalValue:Risk_f * Country + (1 | id), data = df_3_tresh_cleaned_long)
+
+summary(model_with_country_interaction)
+```
+
+
+
+```{r pressure, echo=FALSE}
+# Mittelwert glätten (loess) je Risiko, Land & PoliticalValue
+df_plot <- df_3_tresh_cleaned_long %>%
+  filter(Risk_f %in% c("EconCrisis", "GunViol", "NuclPowerPlant", "PolitCorrupt")) %>% # z.B. nur signifikante
+  mutate(Risk_f = factor(Risk_f))  # falls nötig
+
+ggplot(df_plot, aes(x = CombinedPoliticalValue, y = Rating, color = Country)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ Risk_f, scales = "free_y") +
+  labs(title = "Zusammenhang zwischen politischer Orientierung und Risikowahrnehmung",
+       x = "Politische Orientierung (0 = links, 10 = rechts)",
+       y = "Wahrgenommene Risikohöhe",
+       color = "Land") +
+  theme_minimal()
+```
+
+
+
+```{r pressure, echo=FALSE}
+# Manuell eingeben oder aus summary() extrahieren
+interaction_effects <- data.frame(
+  Risk = c("EconCrisis", "GunViol", "IllegImmigrat", "MentHealthProb", "NaturalDisast",
+           "NuclPowerPlant", "PolitCorrupt", "SexAssault", "Terrorism", "Vaccination", "ViralPandemic"),
+  Effect = c(-3.634, -4.710, -1.183, -1.533, 1.467, 2.000, -5.892, -1.458, -1.803, 1.326, -1.649),
+  p_value = c(0.0003, 2.5e-06, 0.236, 0.125, 0.142, 0.045, 3.8e-09, 0.145, 0.071, 0.185, 0.099)
+)
+
+interaction_effects$significant <- interaction_effects$p_value < 0.05
+
+ggplot(interaction_effects, aes(x = reorder(Risk, Effect), y = Effect, fill = significant)) +
+  geom_col() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  labs(title = "Dreifach-Interaktion: Politische Orientierung × Land × Risiko",
+       x = "Risiko", y = "Interaktionseffekt (β)",
+       fill = "Signifikant") +
+  theme_minimal()
+```
+
+
+```{r pressure, echo=FALSE}
+# Mittelwerte und Standardabweichungen für beide Länder (Deutschland und USA) gleichzeitig
+aggregate(Rating ~ CombinedPoliticalValue + Risk_f + Country, 
+          data = df_3_tresh_cleaned_long, 
+          FUN = mean)
+
+aggregate(Rating ~ CombinedPoliticalValue + Risk_f + Country, 
+          data = df_3_tresh_cleaned_long, 
+          FUN = sd)
+
+```
+
+
+```{r pressure, echo=FALSE}
+ggplot(mean_data, aes(x = CombinedPoliticalValue, y = Rating, fill = CombinedPoliticalValue)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Risk_f + Country, scales = "free_y") +  # Facettierung nach Risiko und Land
+  labs(title = "Mittelwerte der Risikowahrnehmung nach politischer Orientierung und Risiko",
+       x = "Politische Orientierung", 
+       y = "Mittelwert der Risikowahrnehmung") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r pressure, echo=FALSE}
+# Berechne die Standardabweichungen
+sd_data <- aggregate(Rating ~ CombinedPoliticalValue + Risk_f + Country, 
+                     data = df_3_tresh_cleaned_long, 
+                     FUN = sd)
+
+# Berechne die Mittelwerte
+mean_data <- aggregate(Rating ~ CombinedPoliticalValue + Risk_f + Country, 
+                       data = df_3_tresh_cleaned_long, 
+                       FUN = mean)
+
+# Zusammenführen der Mittelwerte und Standardabweichungen
+plot_data <- merge(mean_data, sd_data, by = c("CombinedPoliticalValue", "Risk_f", "Country"))
+colnames(plot_data)[4:5] <- c("Mean", "SD")
+
+# Erstelle das Punktdiagramm mit Fehlerbalken
+ggplot(plot_data, aes(x = CombinedPoliticalValue, y = Mean, color = Country)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), width = 0.2) +
+  facet_wrap(~ Risk_f) +  # Facettierung nach Risiko
+  labs(title = "Mittelwerte und Standardabweichungen der Risikowahrnehmung nach politischer Orientierung und Risiko",
+       x = "Politische Orientierung", 
+       y = "Mittelwert der Risikowahrnehmung mit Fehlerbalken") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r pressure, echo=FALSE}
+# Boxplot für Risikowahrnehmung nach Risiko und Land
+ggplot(df_3_tresh_cleaned_long, aes(x = Risk_f, y = Rating, fill = Country)) +
+  geom_boxplot() +
+  labs(title = "Risikowahrnehmung nach Risiko und Land",
+       x = "Risiko", 
+       y = "Risikowahrnehmung") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r pressure, echo=FALSE}
+# Boxplot erstellen: Risikowahrnehmung in Abhängigkeit von der politischen Orientierung für jedes Risiko
+ggplot(df_3_tresh_cleaned_long, aes(x = factor(CombinedPoliticalValue), y = Rating, fill = factor(Country))) +
+  geom_boxplot() +
+  facet_wrap(~Risk_f, scales = "free_y") +  # Facettierung nach Risiko
+  labs(
+    title = "Risikowahrnehmung in Abhängigkeit von politischer Orientierung und Risiko",
+    x = "Politische Orientierung",
+    y = "Risikowahrnehmung",
+    fill = "Land"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("blue", "red"))  # Blau für Deutschland, Rot für USA
+```
+

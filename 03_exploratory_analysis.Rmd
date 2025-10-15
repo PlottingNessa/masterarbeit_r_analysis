@@ -1,0 +1,4380 @@
+---
+title: "Cleaning Script - Risk Perception"
+date: "2025-02-19"
+output:
+  html_document:
+    toc: true
+    number_sections: false
+    toc_float: true
+    collapsed: true
+    smooth_controll: false
+    fig.width: 26
+    fig.height: 26
+    code_download: true
+    code_folding: show
+  pdf_document:
+    toc: true
+---
+
+
+```{r}
+setwd("C:/Users/vanes/OneDrive/Desktop/Master Psychologie/4. Semester/Masterarbeit")
+
+getwd()
+```
+
+
+## Data Cleaning
+
+This R script is used to clean the datasets from limesurvey, where we conducted our study. We received a total of three datasets from Cint (Cint Exchange is the world's largest global research marketplace for getting your surveys answered). Unfortunately, the variable “Country” is not present in the initial batch, only the variable “Starting language”. This is impractical, as we need the participants location for our analysis. However, we have assumed that the surveys were distributed in English to participants in the United States and in German to those in Germany. After a closer look at the dataset, however, it turned out that this is not the case as, for example, participants with the language “de” (German) left comments in English and vice versa. This problem can be solved using the RID and country list provided by Cint to assign participants to their country of origin.
+The variable “Country” is present in the other two datasets.
+
+The data has already been examined in detail, and it was found that a large proportion of participants completed the study in a very short time, which is referred to as "speeders." This raises concerns about data quality. Therefore, different thresholds are set. This results in datasets with varying levels of data quality, allowing for comparisons between them and an evaluation of data quality. The assumption is that data quality will be higher with a higher threshold than with a lower one.
+
+Finally, the three datasets should be merged into a single file with four Excel sheets, each representing different filtering criteria. Based on the distribution of participant completion times and considering the number of participants, three different thresholds were set:
+- Raw data only
+- Cleaned dataset with no lower limit, but removing the top 5% of participants on their full duration
+- Cleaned dataset with a lower limit of 3 minutes, while removing the top 5% of participants on their full duration
+- Cleaned dataset with a lower limit of 5 minutes, while removing the top 5% of participants on their full duration
+
+For the cleaned datasets, the tresholds are  the of either 0, 3, or 5 minutes.
+
+
+## Packages
+
+```{r, results = "hide"}
+install.packages("visdat")
+install.packages("patchwork")
+#install.packages("XLConnect")
+library(tidyverse)
+library(readxl)
+library(visdat)
+library(knitr)
+#library(XLConnect)
+library(lme4)
+library(patchwork)
+library(forcats)
+```
+
+## Reading in Data
+
+As a first step, the data are read in. The first batch also contains the list provided by Cint to assign the country to each participant.
+Afterwards, batches two and three are read in, where a Country variable is already included.
+
+First batch: df_raw
+Second batch: df_new
+Third batch: df_newer
+
+```{r}
+df_raw <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\3 Datafiles von Cint\\results-survey224442-5_countryIDs.xlsx", sheet = 1) 
+
+US_ID <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\3 Datafiles von Cint\\results-survey224442-5_countryIDs.xlsx", sheet = "US", col_names = "US_ID")
+DE_ID <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\3 Datafiles von Cint\\results-survey224442-5_countryIDs.xlsx", sheet = "DE", col_names = "DE_ID")
+
+# match df_raw by country ID with the RID to create the column "Country"
+df_raw <- df_raw %>% mutate(Country = case_when(RID %in% US_ID$US_ID ~ "US",
+                                                RID %in% DE_ID$DE_ID ~ "DE",
+                                                .default = NA))
+
+
+df_new <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\3 Datafiles von Cint\\results-survey224442-10.xlsx") # second batch after Country ID
+
+df_newer <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\3 Datafiles von Cint\\results-survey224442-10v2.xlsx") # third batch
+
+```
+
+In the first batch, some information is still missing for the Country variable. Therefore, it is assumed that these cases are from the US.
+
+```{r}
+df_raw %>% group_by(Country) %>% 
+   summarize(n = n())
+```
+
+Therefore, the entry 'US' is assigned to the missing values in the Country variable.:
+
+```{r}
+df_raw <- df_raw %>% mutate(Country = if_else(is.na(Country) == TRUE, "US", Country))
+
+df_raw %>% group_by(Country) %>% 
+   summarize(n = n())
+```
+
+Combine the data:
+```{r}
+# take same column names from new data from the names of old data
+old_name <- colnames(df_raw)
+
+
+new_dat_filtered <- df_new %>%
+   select(Country, old_name)
+
+newer_dat_filtered <- df_newer %>% 
+   select(Country, old_name)
+
+combined_dat <- df_raw %>% 
+   select(Country, old_name) %>%
+   rbind(new_dat_filtered, newer_dat_filtered)
+```
+
+Visualize the data:  
+```{r, include=T}
+vis_dat(combined_dat, sort_type = F)
+```
+
+
+Since several columns are consistently empty, they will be removed. For example, individual timestamps for specific risk-related questions were not recorded; instead, only the group timestamp was captured when all three dimensions of a risk were answered on the same page. 
+
+```{r, include=T}
+# look up which of these column only contain missing values without any useful information
+empty_cols <- which(colSums(is.na(combined_dat)) == nrow(combined_dat))
+
+# select only the column with at least one value
+combined_dat_selected <- combined_dat[,-empty_cols]
+
+```
+
+
+And lastly filter for all those who gave consent, gave "yes" in the datacontrol question **and** are above 18 years old.
+```{r}
+combined_dat_yes_only <- combined_dat_selected %>% 
+  filter(consent == "I agree with this declaration of consent and the processing of my personal data" & datacontrol == "Yes" & age >= 18) %>% 
+  select(id, startlanguage, Country, everything())
+
+vis_dat(combined_dat_yes_only, sort_type = F)
+
+```
+
+Some columns are still somewhat missing (other gender, other education etc.) which is to be expected. 
+
+## Removing Duplicates
+
+Checking that we do not have duplicates, by checking the RID, the identifier for each participant:
+
+```{r}
+combined_dat_yes_only %>% 
+   group_by(RID) %>% 
+   summarize(n_RID = n()) %>% 
+   filter(n_RID > 1)%>% 
+   kable()
+```
+
+Some duplicate RID, but also over 200 where RID is not given...  
+Let's have a look at all these duplicates.
+
+```{r}
+duplicate_RID <- combined_dat_yes_only %>% 
+   group_by(RID) %>% 
+   summarize(n_RID = n()) %>% 
+   filter(n_RID == 2) %>% 
+   pull(RID)
+
+removed_duplicates <-  combined_dat_yes_only %>% filter(RID %in% duplicate_RID)
+removed_duplicates %>% select(id, Country, startdate, RID)
+```
+
+It seems like that these surveys were completed relatively within a short time interval. Because of that, we will remove both submissions, as we can not be sure how high the data quality is given the 2nd attempt. We will also remove participants with unknown RID, just to make sure that we only keep the participants where everything was working as intended.  
+
+```{r}
+dat_dupl_rem <- combined_dat_yes_only %>% 
+   filter(!(RID %in% duplicate_RID)) %>% 
+   filter(is.na(RID) == FALSE)
+```
+
+## Locating Speeders
+
+Our biggest problem are the speeders which gave consent and might still have given a "yes" in the datacontrol question. We can first summarize how long it took for our remaining participants to finish the survey (values are in minutes).
+
+```{r}
+dat_dupl_rem %>% summarize(mean_time = mean(interviewtime) / 60,
+                           sd_time = sd(interviewtime)/ 60,
+                           min_time = min(interviewtime)/ 60,
+                           max_time = max(interviewtime)/ 60)
+
+```
+
+We can see that the fastest time was under two minutes (e.g. less than 10 seconds for each risk group), while someone took 10 hours to complete the survey. Here is a visualization:  
+
+```{r}
+dat_dupl_rem <- dat_dupl_rem %>% 
+   mutate(minutes_interviewtime = interviewtime / 60)
+
+dat_dupl_rem %>% ggplot(aes(minutes_interviewtime))+
+   geom_histogram(binwidth = 10)+
+   scale_x_continuous(breaks = seq(0,650, by = 50))+
+   theme_minimal()
+
+```
+
+The survey also has been done by us, the Masterprojekt group, and it took around 8 to 11 minutes to genuinely fill out the survey.  
+Lets take out the outliers on the upper end who would be defined as "outliers" by taking out the top 5 percentile, leaving us with the bottom 95% of the dataset.  
+
+Here is a short summary what we would have left after taking out these heavy outliers (again in minutes):    
+
+```{r}
+upper_95 <- quantile(dat_dupl_rem$minutes_interviewtime, .95)
+
+dat_dupl_rem <- dat_dupl_rem %>% mutate(considered_bad = if_else(minutes_interviewtime >= upper_95, 1, 0))
+
+
+summary_speed <- dat_dupl_rem %>% filter(considered_bad == 0) %>%
+   summarize(
+      mean_time = mean(minutes_interviewtime),
+      sd_time = sd(minutes_interviewtime),
+      min_time = min(minutes_interviewtime),
+      max_time = max(minutes_interviewtime)
+   )
+
+summary_speed
+
+```
+
+Distributions after taking out the heavy outliers:  
+
+```{r}
+dat_dupl_rem %>% 
+   filter(considered_bad == 0) %>% 
+   ggplot(aes(minutes_interviewtime))+
+   geom_histogram(binwidth = 1)+
+   scale_x_continuous(breaks = seq(0,60, by = 1))+
+   theme_minimal()
+
+```
+
+Additionally, we'll create 2 other datasets as mentioned above:  
+- Dataset with the lower limit of 3 minutes (giving the participants less than 5 seconds to complete the 36 risks questions, not including informed consent, and the demographics etc.)  
+- Dataset with the lower limit of 5 minutes, providing a more realistic threshold for data quality.
+
+```{r}
+mean_time <- summary_speed$mean_time
+sd_time <- summary_speed$sd_time
+
+no_low_thresh <- dat_dupl_rem %>% 
+   filter(considered_bad == 0)
+
+low_3_thresh <- no_low_thresh %>% filter(minutes_interviewtime >= 3) %>% 
+   mutate(Threshold = 3)
+low_5_thresh <- no_low_thresh %>% filter(minutes_interviewtime >= 5) %>% 
+   mutate(Threshold = 5)
+```
+
+Here is a quick display in how the distributions for each created dataset looks like:  
+
+```{r}
+all_thresholds_data <- no_low_thresh %>% mutate(Threshold = 0) %>% 
+   rbind(low_3_thresh, low_5_thresh) 
+
+all_thresholds_data %>% 
+   ggplot(aes(minutes_interviewtime))+
+   geom_histogram(binwidth = .5)+
+   scale_x_continuous(breaks = seq(0,20, by = 1)) +
+   facet_grid(rows = vars(Threshold))+
+   labs(x = "Completion Times in Minutes")+
+   theme_minimal()
+```
+
+Here is a barplot indicating how many participant are in the different Thresholds, colored by Country of origin:  
+
+```{r}
+all_thresholds_data %>% group_by(Threshold, Country) %>% 
+   summarize("Number of Participants" = n()) %>% 
+   ggplot(aes(factor(Threshold), `Number of Participants`, fill = Country))+
+   geom_bar(stat = "identity", position = "dodge")+
+   labs(x = "Lower Threshold in Minutes")+
+   geom_text(aes(label = `Number of Participants`), vjust = -.5, position =  position_dodge(width = .9))+
+   theme_minimal()
+
+```
+
+## Saving to Excel
+
+Save the data into a excel file:  
+
+```{r}
+# create excel file into R environment
+wb <- loadWorkbook(create = T, filename = "newest_dat_file.xls")
+
+# create sheets in the same file, giving them intuitive names
+createSheet(wb, name = "raw_only")
+createSheet(wb, name = "0_min")
+createSheet(wb, name = "3_min")
+createSheet(wb, name = "5_min")
+
+# load data into the specific sheets
+writeWorksheet(wb, combined_dat_selected, sheet = "raw_only")
+writeWorksheet(wb, no_low_thresh, sheet = "0_min")
+writeWorksheet(wb, low_3_thresh, sheet = "3_min")
+writeWorksheet(wb, low_5_thresh, sheet = "5_min")
+
+# save data and export
+saveWorkbook(wb)
+```
+
+## Final Data set
+
+## General Information
+
+Now, all the data has been compiled into a single Excel file, with the various thresholds available as individual sheets.
+For my analysis, I will focus on data from participants in the US.
+Exploratively, I will examine the influence of political orientation on risk perception across three dimensions and four domains.
+
+
+## Descriptive Statistics with Data using a threshold of 3 minutes
+
+## Reading in Data
+
+First I will look at the data with threshold 3 minutes.
+```{r}
+df_final_3_tresh <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\Dataset mit unterschiedlichen treshholds\\newest_dat_file.xls", sheet = 3)
+```
+
+
+## visualization of the number of participants
+
+A total of 1,852 participants from the United States met the threshold of at least 3 minutes survey completion time.
+```{r}
+df_final_3_tresh %>%
+  group_by(Country) %>%
+  summarize(Number_of_Participants = n()) %>%
+  ggplot(aes(x = Country, y = Number_of_Participants, fill = Country)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = Number_of_Participants), vjust = -0.5, position = position_dodge(width = 0.9)) +
+  labs(title = "Number of Participants from the US (Threshold: 3 Minutes)",
+       x = "Country", 
+       y = "Number of Participants") +
+  theme_minimal() +
+ scale_fill_manual(values = c("#F8766D", "#00BFC4"))
+```
+
+
+
+## Gender Distribution Visualization and Description
+
+The gender distribution within the U.S. sample (N = 1,852) was comprised of 1,083 participants identifying as female (58.5%), 752 as male (40.6%), 8 as non-binary or gender diverse (0.4%), 2 selecting 'Other' (0.1%), and 6 participants (0.3%) who preferred not to disclose their gender.
+
+```{r}
+table(df_final_3_tresh$gender[df_final_3_tresh$Country == "US"])
+```
+# Missing Values in 'Gender' for US Participants
+
+There was one missing value in the gender variable among participants from the United States.
+```{r}
+sum(is.na(df_final_3_tresh$gender[df_final_3_tresh$Country == "US"]))
+```
+
+# Percentage Distribution of Genders for US Participants
+
+```{r}
+prop.table(table(df_final_3_tresh$gender[df_final_3_tresh$Country == "US"])) * 100
+```
+# Visualization of Gender Distribution
+
+For the visualization, the smaller categories (Non-binary, Other, Prefer not to say, and Missing Value) are combined into an 'Other' category.
+
+```{r}
+# Missing values and specific categories (Non-binary, Other, Prefer not to say) are combined into "Other"
+df_final_3_tresh$gender[is.na(df_final_3_tresh$gender) | df_final_3_tresh$gender %in% c("Non-binary / Gender diverse", "Other", "Prefer not to say")] <- "Other"
+
+# Visualize the gender distribution
+ggplot(df_final_3_tresh[df_final_3_tresh$Country == "US", ], aes(x = gender, fill = gender)) +
+  geom_bar(stat = "count", position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  labs(title = "Gender Distribution Among US Participants (Threshold: 3 Minutes)",
+       x = "Gender", 
+       y = "Number of Participants") +
+  scale_fill_manual(values = c("Female" = "salmon", "Male" = "lightblue", "Other" = "lightgreen")) +  # Lightblue for Male, Salmon for Female, Lightgreen for Other
+  theme_minimal() +
+  theme(legend.position = "none")+  # Remove legend as the labels are already included
+  ylim(0, 1200)  # Set y-axis limit to 1200
+```
+
+## Age Distribution Visualization and Description
+
+The analysis of the age distribution of participants from the United States shows a broad age range, with ages spanning from 18 to 99 years. A significant portion of the participants falls within the 60-69 and 70-79 age groups, which contain 430 and 391 participants, respectively. The smallest group is the 90+ category, with only one participant. The overall distribution is skewed towards older participants, as evidenced by the median age of 58 years and the mean age of 54.85 years. The age groups with the largest representation are 60-69 and 70-79, which suggests that middle-aged and older adults dominate the sample. The 18-29 age group, with 165 participants, is the smallest group among the younger age ranges, followed by the 30-39 and 40-49 groups.
+
+When examining the mean age by gender, the results reveal slight differences between males and females. The mean age for females is 54.63 years, while for males, it is 55.62 years. Participants identified as Other gender have a notably lower mean age of 35.35 years, which reflects a smaller and younger group. The overall age distribution suggests that the study sample is more representative of middle-aged to older adults.
+
+```{r}
+# Histogram of Age Distribution
+ggplot(df_final_3_tresh[df_final_3_tresh$Country == "US", ], aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "darkgreen", color = "black", boundary = 0) + 
+  labs(title = "Age Distribution of US Participants (Threshold: 3 Minutes)", 
+       x = "Age (years)", 
+       y = "Number of Participants") +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(0, 100, by = 10)) +  # X-axis breaks every 10 years
+  scale_y_continuous(limits = c(0, 300)) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14))
+
+```
+
+```{r}
+
+# Barplot for age groups
+ggplot(df_final_3_tresh %>%
+         filter(Country == "US", !is.na(age_group)),  # Removes NA values from the 'age_group' column
+       aes(x = age_group)) +
+  geom_bar(fill = "darkgreen", color = "black", na.rm = TRUE) +  # Explicitly removes NA values
+  labs(title = "Age Groups of US Participants (Threshold: 3 Minutes)", 
+       x = "Age Group", 
+       y = "Number of Participants") +
+  theme_minimal() +  # Minimalistic theme
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # X-axis labels rotated
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), # Formatting the title
+    axis.title = element_text(size = 14),  # Increasing the size of axis titles
+    axis.text = element_text(size = 12)    # Increasing the size of axis labels
+  )
+
+```
+# Age Distribution Tables
+
+```{r}
+
+# Check for "NA" values in age variable for US participants
+sum(is.na(df_final_3_tresh$age[df_final_3_tresh$Country == "US"]))
+
+# Calculate the mean age for all US participants
+mean_age_all <- df_final_3_tresh %>%
+  filter(Country == "US") %>%
+  summarise(Mean_Age = mean(age, na.rm = TRUE))  # Calculates the mean age for all participants in the US, ignoring NA values
+
+# Calculate the mean age by gender for US participants
+mean_age_gender <- df_final_3_tresh %>%
+  filter(Country == "US") %>%
+  group_by(gender) %>%
+  summarise(Mean_Age = mean(age, na.rm = TRUE))  # Calculates the mean age by gender for US participants, ignoring NA values
+
+# Display the results
+print(mean_age_all)  # Prints the mean age for all US participants
+print(mean_age_gender)  # Prints the mean age by gender for US participants
+
+# Summary of the Age Distribution for US Participants
+age_summary <- summary(df_final_3_tresh$age[df_final_3_tresh$Country == "US"])
+print(age_summary)
+
+
+# Create Age Groups
+df_final_3_tresh$age_group <- cut(df_final_3_tresh$age, 
+                                  breaks = c(18, 29, 39, 49, 59, 69, 79, 89, 99), 
+                                  labels = c("18-29", "30-39", "40-49", "50-59", "60-69", 
+                                             "70-79", "80-89", "90+"), right = FALSE)
+
+# Age Distribution Table for US Participants
+age_group_table <- table(df_final_3_tresh$age_group[df_final_3_tresh$Country == "US"])
+print(age_group_table)
+
+```
+# Education Visualization and Description
+
+The educational distribution of the sample is as follows: The largest group consists of participants with some college education (595 individuals), followed by those with a high school diploma (514 participants). 420 participants hold a bachelor’s degree, while 167 have completed a master’s degree. Fewer participants have a doctoral degree (38), less than a high school education (70), or no formal education (5). Additionally, 39 participants identified as having an "other" education level.
+
+The educational distribution across genders shows that the largest group of participants (366 females, 223 males, and 6 others) have attended some college, with females representing 61.51% and males 37.48%. The second-largest group consists of individuals with a high school diploma, with 323 females, 188 males, and 3 others, where females make up 62.84% and males 36.58%. The proportion of bachelor's degree holders is also notable, with 229 females, 188 males, and 3 others, resulting in 54.52% females and 44.76% males. Participants with a master’s degree (68 females, 97 males, and 2 others) are more predominantly male (58.08%). In terms of educational attainment, fewer participants fall into the categories of less than high school (46 females, 22 males, and 2 others), with females representing 65.71%. Other educational qualifications show a higher percentage of females (76.92%), particularly in the "Other" category (30 females, 8 males, 1 other). Doctoral degree holders are split with 42.11% females and 57.89% males. Finally, those with no formal school education are mostly male (60%), with only 2 females and 3 males in this category.
+
+
+# Education Levels Table
+```{r}
+education_table <- table(df_final_3_tresh$education[df_final_3_tresh$Country == "US"])
+print(education_table)
+```
+
+# Visualization of Education Levels
+```{r}
+# Sort data by frequency
+education_sorted <- df_final_3_tresh %>%
+  filter(Country == "US") %>%
+  count(education) %>%
+  arrange(n)
+
+# Plot with sorted categories
+ggplot(education_sorted, aes(x = reorder(education, -n), y = n, fill = education)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), vjust = -0.5) +
+  labs(title = "Education Levels",
+       x = "Education Level",
+       y = "Number of Participants") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+```
+# Visualization of Education Levels by Gender
+```{r}
+
+# Reorder education levels based on the count of participants
+df_final_3_tresh$education <- factor(df_final_3_tresh$education, 
+                                      levels = names(sort(table(df_final_3_tresh$education[df_final_3_tresh$Country == "US"]), decreasing = TRUE)))
+
+# Grouped bar chart for males, females, and others
+ggplot(df_final_3_tresh[df_final_3_tresh$Country == "US", ], aes(x = education, fill = gender)) +
+  geom_bar(position = "dodge") +  # Position dodge makes the bars appear side by side
+  labs(title = "Education Distribution by Gender", 
+       x = "Education Level", 
+       y = "Number of Participants") +
+  scale_fill_manual(values = c("salmon", "lightblue", "lightgreen"),  # Swapped colors for Male and Female
+                    name = NULL,  # Remove the legend title
+                    labels = c("Female", "Male", "Other")) +  # Use custom labels
+  theme_minimal() +
+  theme(legend.position = "top", 
+        axis.text.x = element_text(angle = 90, hjust = 1), 
+        legend.key = element_blank()) +  # Remove the border and background from the legend
+  ylim(0, 400)  # Set y-axis limit to 400
+```
+# Create a table comparing the Education Levels for each gender
+```{r}
+# Create the table comparing education levels for each gender
+education_gender_table <- table(df_final_3_tresh$education[df_final_3_tresh$Country == "US"], 
+                                df_final_3_tresh$gender[df_final_3_tresh$Country == "US"])
+
+# Print the table
+print(education_gender_table)
+
+# Now calculate the percentage for each education level within each gender
+education_gender_percentage <- prop.table(education_gender_table, margin = 1) * 100
+
+# Print the percentage table
+print(education_gender_percentage)
+```
+
+# Check vor Missing Values (NA) in Education
+
+There are 4 missing values in the education variable.
+```{r}
+# Check for NAs in the 'education' column for US participants
+sum(is.na(df_final_3_tresh$education[df_final_3_tresh$Country == "US"]))
+```
+# Analysis of Political Orientation Data: Cleaning and Filtering for Complete Cases
+
+To ensure the analysis is based on participants with complete data for both political orientation scales, the dataset was filtered to include only U.S. participants. Individuals with missing values in either the Liberal-Conservative Political Value or Left-Right Political Value variables were excluded from the analysis.
+
+- For the Liberal-Conservative Political Value variable, the range of responses spans from 0 to 10, with a mean of 5.542. This variable contains 86 missing values. 
+- Similarly, the Left-Right Political Value variable, which also ranges from 0 to 10, has a slightly lower mean of 5.378 and contains 146 missing values. 
+However, since some participants may have missing values in either one or both of the political scales, the total number of exclusions is not simply the sum of the missing values in each variable.
+
+After filtering, 1,689 participants remain in the dataset, having provided valid responses for both political orientation scales. Consequently, 163 participants who had missing values in one or both of the political orientation variables were excluded from further analysis.
+
+Only the filtered dataset with complete information for both political scales was used for the subsequent analysis and visualizations. This approach ensures that the results reflect the participants' political orientations across both scales without bias introduced by missing data.
+```{r}
+# Check range and summary for both political orientation variables
+summary(df_final_3_tresh$LibConsPolitValue[df_final_3_tresh$Country == "US"])
+summary(df_final_3_tresh$LeftRightPolitValue[df_final_3_tresh$Country == "US"])
+```
+
+```{r}
+# Filter US participants where both political values are not missing
+us_filtered <- df_final_3_tresh[df_final_3_tresh$Country == "US" & 
+                                !is.na(df_final_3_tresh$LibConsPolitValue) & 
+                                !is.na(df_final_3_tresh$LeftRightPolitValue), ]
+
+# Count the number of participants where both values are filled
+num_participants_both_filled <- nrow(us_filtered)
+
+# Display the result
+num_participants_both_filled
+
+
+# Check how many missing values exist for each political scale in the filtered data (us_filtered)
+sum(is.na(us_filtered$LibConsPolitValue))  # Missing in LibCons
+sum(is.na(us_filtered$LeftRightPolitValue))  # Missing in LeftRight
+
+
+```
+# Calculation of the correlation between Left-Right and Lib-Cons Political variables
+
+The correlation is 0.76 which indicates a moderate to strong positive correlation between the two political value scales.
+
+Given the moderate to strong correlation between the two political orientation scales (0.76), it may be insightful to analyze them separately, as each scale potentially measures distinct aspects of political orientation. Analyzing both scales individually allows for a more nuanced understanding of each scale's contribution, while mitigating potential issues with multicollinearity.
+
+Alternatively, one could choose to analyze only one of the scales. While this would simplify the analysis and avoid multicollinearity, it would lead to the loss of the additional information provided by the second scale, which might offer a more comprehensive view of political orientation. Therefore, analyzing both scales separately seems to be the preferable approach to retain the full richness of the data.
+
+```{r}
+# Calculate correlation using Pearson method
+correlation_result <- cor(us_filtered$LibConsPolitValue, us_filtered$LeftRightPolitValue, 
+                          method = "pearson", use = "complete.obs")
+print(correlation_result)
+```
+
+# Visualization of the Relationship between the two Political Scales
+
+We observe a concentration of points at values 0, 5, and 10, which could indicate that many participants are positioned either in the middle (neutral) or at the extreme ends of the political scale.
+There are also participants who selected a 10 on the Left-Right scale and a 0 on the Liberal-Conservative scale, and vice versa. This contradiction may suggest that some participants did not answer the scales carefully or it may indicate differing interpretations of the scales or confusion about their meanings.
+Now the question arises, if these participants with contradictory values should be excluded.
+One reason for it could be that the inconsistencies are due to careless responses, which may be difficult to prove. To possibly exclude these participants, a stricter filtering criteria could be used.
+
+```{r}
+# Scatterplot with jitter and a blue regression line
+us_filtered %>% 
+  ggplot(aes(LeftRightPolitValue, LibConsPolitValue)) +
+  geom_point(position = "jitter") +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +  # Adds a linear regression line in blue
+  labs(
+    title = "Relationship between Left-Right and Liberal-Conservative Political Values",
+    x = "Left-Right Political Value",
+    y = "Liberal-Conservative Political Value"
+  ) +
+  annotate("text", x = 1, y = 10.5, label = paste("Correlation: ", round(correlation_result, 2)), 
+           color = "red", size = 5, hjust = 0) +  # Move annotation outside data points
+  theme_minimal()
+```
+## Contradictory Responses and exploring the Inconsistencies
+
+In this analysis, participants are flagged as having contradictory responses if the difference between their Left-Right Political Value and Lib-Cons Political Value is exactly 10. This threshold can be adjusted if necessary to account for variations in the responses.
+
+With 1689 participants, a total of 18 participants were flagged as providing contradictory responses. This represents a small fraction of the total dataset, with approximately 1.07% of participants providing contradictory responses, defined as a difference of exactly 10 between the two political values.
+The handling of these contradictory responses is still an open question.
+
+The next step is to explore whether these contradictory responses are more prevalent in specific groups, such as gender, age, or education level. By breaking down the data based on these factors, patterns of inconsistencies can be identified, providing insights into whether certain demographics exhibit more contradictions in their political orientation responses.
+
+
+Among the 18 participants flagged for providing contradictory responses, there were 11 females and 7 males. The age distribution of these contradictory responses is spread across most age groups, with the highest number (4) observed in the 50-59 age group. Overall, the contradictory responses are fairly evenly distributed across the age groups, with no responses in the 80-89 and 90+ age groups.
+
+In terms of education, the majority of contradictory responses came from participants with a high school diploma (8), followed by 6 participants with some college, 3 with a bachelor’s degree, and 1 with a doctoral degree. Interestingly, there were no contradictory responses from participants with less than a high school education, a master's degree, or no formal education. 
+
+The distribution of contradictory responses across gender, age, and education does not reveal any clear patterns. This lack of a clear pattern suggests that the contradictory responses cannot be easily attributed to demographic factors alone. The inconsistencies may indicate that participants either misunderstood or interpreted the two political scales differently. It is also possible that participants struggled to answer the questions carefully or experienced difficulty in positioning themselves clearly on the scales. Alternatively, the two scales may have been perceived as measuring different political dimensions, leading to confusion or mixed responses. Further investigation would be needed to better understand the underlying causes of these contradictory answers.
+
+```{r}
+# Flagging contradictory responses based on a 10-point difference
+contradictory_responses <- us_filtered %>%
+  mutate(contradictory = abs(LibConsPolitValue - LeftRightPolitValue) == 10)
+
+# Counting the number of contradictory responses
+num_contradictory <- sum(contradictory_responses$contradictory, na.rm = TRUE)
+
+# Display the result
+num_contradictory
+
+# Exploring contradictory responses by gender, age, and education
+contradictory_by_gender <- contradictory_responses %>%
+  group_by(gender) %>%
+  summarise(contradictory_count = sum(contradictory, na.rm = TRUE))
+
+contradictory_by_age <- contradictory_responses %>%
+  group_by(age_group) %>%
+  summarise(contradictory_count = sum(contradictory, na.rm = TRUE))
+
+contradictory_by_education <- contradictory_responses %>%
+  group_by(education) %>%
+  summarise(contradictory_count = sum(contradictory, na.rm = TRUE))
+
+# Print the results
+print(contradictory_by_gender)
+print(contradictory_by_age)
+print(contradictory_by_education)
+```
+
+
+## Visualization and Distribution of Political Values
+
+# Left-Right Political Value Scale Distribution Description
+
+Based on the tables of the distribution as well as the visualization of the distribution of political values, it is evident that there is a strong tendency toward the center, with the most frequent response being in the middle at the value of 5. For the "Left-Right" Political Value Scale 535 participants selected this value, which accounts for 31.67% of the total. The second most frequently chosen value is on the extreme right, at value 10, which was selected by 186 individuals, representing 11% of the total. The third-highest value is on the extreme left, at value 0, which was chosen by 148 participants, making up 8.76% of the total. The fourth most frequent response is 8, with 163 participants selecting this value, which corresponds to 9.65%
+
+
+Most selected value (5): 535 participants (31.67%)
+Second most selected value (10, extreme right): 186 participants (11%)
+Third most selected value (0, extreme left): 148 participants (8.76%)
+Fourth most selected value (8): 163 participants (9.65%)
+
+# Lib-Con Political Value Scale Distribution Description
+
+Similar patterns can be observed in the “Lib-Con Political Value Scale”, with the most frequently chosen values showing a clear tendency towards the center. The value in the middle, that is, 5, was selected by 469 participants, which corresponds to 27.76%. 
+However, there is a noticeable difference compared to the left-right Political Value Scale: the second most frequently selected value is 8, which is also positioned on the right side of the scale. This value was chosen by 203 individuals, representing 12% of the total. As with the left-right Political Value Scale, many participants selected the extreme value of 10, with 194 individuals choosing this option, accounting for 11.48%. Finally, the value 0 was selected by 137 participants, corresponding to 8.1%
+
+
+Most selected value (5): 469 participants (27.76%)
+Second most selected value (8): 203 participants (12%)
+Third most selected value (10, extreme right): 194 participants (11.48%)
+Fourth most selected value (0, extreme left): 137 participants (8.1%)
+
+```{r}
+# Frequency distribution for Left-Right
+freq_table_us <- us_filtered %>%
+  group_by(LeftRightPolitValue) %>%
+  summarise(count = n()) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  arrange(LeftRightPolitValue)
+
+# Frequency distribution for Lib-Con
+freq_libcons_us <- us_filtered %>%
+  group_by(LibConsPolitValue) %>%
+  summarise(count = n()) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  arrange(LibConsPolitValue)
+
+# Print the tables
+print(freq_table_us)
+print(freq_libcons_us)
+
+```
+
+
+```{r}
+
+# Visualization for Left-Right
+ggplot(freq_table_us, aes(x = LeftRightPolitValue, y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Frequency Distribution: Left-Right (US Participants)",
+       x = "Left-Right Political Value",
+       y = "Count") +
+  scale_x_continuous(breaks = seq(0, 10, by = 2)) +  # Ensure 10 is included
+  scale_y_continuous(limits = c(0, 550)) + 
+  theme_minimal()
+
+# Visualization for Lib-Con
+ggplot(freq_libcons_us, aes(x = LibConsPolitValue, y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Frequency Distribution: Lib-Con (US Participants)",
+       x = "Lib-Con Political Value",
+       y = "Count") +
+ scale_x_continuous(breaks = seq(0, 10, by = 2)) +  # Ensure 10 is included
+  scale_y_continuous(limits = c(0, 550)) + 
+  theme_minimal()
+```
+
+## Data Preparation for Mixed-Effects Modeling
+
+The following dataset was restructured to facilitate the implementation of a Mixed-Effects Model, which will be conducted in later analyses.  Specifically, the data were transformed from a wide to a long format to enable the inclusion of different risk perception dimensions (Affect, Consequentialist, and Probability) as separate predictors within the model framework. This transformation was accomplished by selecting variables that contained the terms Affect, Sever, or Probs, representing distinct aspects of risk perception, and applying a pivoting procedure to consolidate them into a single, unified structure.
+
+Furthermore, categorical variables — including education, risk dimension, risk type, and country—were converted into factors. This step ensures their correct specification in the statistical models, allowing for the examination of group differences and interactions (e.g., across educational levels or risk types). These data transformations provide a flexible structure for analyzing how political orientation relates to risk perception across multiple domains and dimensions.
+
+```{r}
+
+risk_cols <- which(str_detect(colnames(us_filtered), pattern = "Affect|Sever|Probs"))
+
+df_long <- us_filtered %>% 
+  pivot_longer(cols = risk_cols,
+               names_to = c("Risk", "Risk_Dimension"),
+               values_to = "Rating",
+               names_pattern = "(\\w+)(Affect|Sever|Probs)")
+
+
+df_long <- df_long %>% 
+   mutate(education = str_trim(education),
+      education = factor(education, levels = c("NA","Other", "No formal school education", "Less than high school", "High school diploma",
+                                                   "some college", "Bachelor’s degree", "Master’s degree", "Doctoral degree"), ordered = T),
+      Risk_Dimension_f = factor(Risk_Dimension),
+      Risk_f = factor(Risk),
+      Country_f = factor(Country)
+      )
+
+```
+
+## First Try as an Example: Visualization of the Relationship Between Political Identity (Lib-Cons Scale) and Risk Perception (Affect Dimension: Illegal Immigration)
+
+# Scatterplot and Histogram
+
+As an initial visual exploration, two plots were created to investigate the relationship between political identity and risk perception of illegal immigration. First, a scatter plot was used with LibConsPolitValue (political orientation) on the x-axis and IllegImmigratAffect (risk perception) on the y-axis, incorporating jittering to reduce overlap and a linear regression line to depict the trend. 
+The regression line in the scatterplot reveals a positive correlation between political conservatism (LibConsPolitValue) and the perception of risk regarding illegal immigration (IllegImmigratAffect). As political conservatism increases, so does the perceived risk, with participants who identify as more conservative tending to rate the risk higher. This suggests that conservative individuals are more likely to view illegal immigration as a significant concern.
+
+Second, a histogram of IllegImmigratAffect was created to visualize the distribution of participants' risk perceptions. These initial plots provide an overview of potential associations between political identity and risk perception.
+The histogram of the risk ratings shows a skewed distribution with a high concentration of responses at the extreme values (0 and 10), followed by a moderate peak at the middle value (5). This suggests that most participants perceive the risks either as very low or very high, with fewer participants assigning moderate values to the risk perception.
+
+The second histogram visualizes the distribution of risk perception for illegal immigration, with political orientation (LibConsPolitValue) represented by color. It reveals how individuals across the political spectrum rate the perceived risk. It confirms the scatterplot findings: conservative individuals often rate the risk of illegal immigration as 10, while liberal individuals tend to rate it as 0, reflecting differing risk perceptions based on political orientation.
+
+
+
+```{r}
+us_filtered %>%
+  ggplot(aes(LibConsPolitValue, IllegImmigratAffect))+
+  geom_jitter(alpha = .2)+
+  geom_smooth(aes(group = 1),method = "lm", se = F)
+
+us_filtered %>% 
+  ggplot(aes(IllegImmigratAffect)) +
+  geom_histogram(binwidth = 0.5, fill = "steelblue", alpha = 0.7) +
+  labs(title = "Distribution of Risk Perception for Illegal Immigration", 
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+
+us_filtered %>% 
+  ggplot(aes(IllegImmigratAffect, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Distribution of Risk Perception for Illegal Immigration", 
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Political Orientation") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+## Exploratory Visualizations of Risk Perceptions by Political Orientation Values
+
+
+To explore the relationship between political orientation and risk perception, histograms were generated to illustrate the distribution of risk perception ratings. The analysis included four domains: health, crime, nature, and social/political issues, each comprising three specific risk items, resulting in a total of twelve risks. For each of these risk items, separate histograms were created for the three dimensions of risk perception: Affect, Probability, and Consequentialist.
+
+For each risk, two separate histograms were created to visualize the distribution of risk perception based on two distinct political orientation scales: Left-Right and Liberal-Conservative. These histograms were constructed across three key dimensions of risk perception: Affect, Probability, and Consequentialist. Consequently, for each individual risk, a total of six histograms were generated—two for each of the three dimensions.
+These six histograms per risk were further organized across four thematic domains, resulting in a total of 24 histograms.
+
+This comprehensive visualization approach allows for an in-depth comparison of risk perception patterns across political orientations, domains, and dimensions, providing valuable insights into how individuals from varying political backgrounds perceive the riskiness of different risks.
+
+A comparison of the histograms suggests that the distributions of risk perception ratings based on Left-Right and Liberal-Conservative political orientations are largely similar. Nonetheless, subtle differences are apparent in the response patterns between the two scales. These differences are minor and consistent with the previously observed high correlation between the two political orientation measures (r = 0.76), indicating that both scales capture overlapping, yet not entirely identical, aspects of political attitudes in this sample.
+
+
+# Health Domain
+
+- Vaccination
+- Viral Pandemic
+- Mental Health Problems
+
+
+# Vaccination: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p1 <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p2 <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p1 + p2
+
+```
+
+
+# Vaccination: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p1a <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p2b <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p1a + p2b
+
+```
+
+
+# Vaccination: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p1c <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p2d <- df_long %>%
+  filter(Risk == "Vaccination" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Vaccination Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p1c + p2d
+
+```
+
+
+# Viral Pandemic: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p3 <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p4 <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p3 + p4
+
+```
+
+
+
+# Viral Pandemic: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p3a <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p4b <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p3a + p4b
+
+```
+
+# Viral Pandemic: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p3c <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p4d <- df_long %>%
+  filter(Risk == "ViralPandemic" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Viral Pandemic Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p3c + p4d
+
+```
+
+
+# Mental Health Problems: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p5 <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p6 <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p5 + p6
+
+```
+
+# Mental Health Problems: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p5a <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p6b <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p5a + p6b
+
+```
+
+# Mental Health Problems: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p5c <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p6d <- df_long %>%
+  filter(Risk == "MentHealthProb" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Mental Health Problems Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p5c + p6d
+
+```
+
+# Crime Domain
+
+- Sexual assault
+- Gun violence
+- Terrorism
+
+# Sexual assault: Affect Dimension
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p7 <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p8 <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p7 + p8
+
+```
+
+# Sexual assault: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p7a <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p8b <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p7a + p8b
+
+```
+
+# Sexual assault: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p7c <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p8d <- df_long %>%
+  filter(Risk == "SexAssault" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Sexual Assault Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p7c + p8d
+
+```
+
+# Gun violence: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p9 <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p10 <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p9 + p10
+
+```
+
+# Gun violence: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p9a <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p10b <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p9a + p10b
+
+```
+
+# Gun violence: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p9c <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p10d <- df_long %>%
+  filter(Risk == "GunViol" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Gun Violence Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p9c + p10d
+
+```
+
+# Terrorism: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p11 <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p12 <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p11 + p12
+
+```
+
+# Terrorism: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p11a <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p12b <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p11a + p12b
+
+```
+
+
+# Terrorism: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p11c <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p12d <- df_long %>%
+  filter(Risk == "Terrorism" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Terrorism Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p11c + p12d
+
+```
+
+
+# Nature Domain
+
+- Climate change
+- Natural disaster
+- Nuclear power plant incident
+
+# Climate change: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p13 <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p14 <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p13 + p14
+
+```
+
+# Climate change: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p13a <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p14b <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p13a + p14b
+
+```
+
+# Climate change: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p13c <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p14d <- df_long %>%
+  filter(Risk == "ClimateChange" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Climate Change Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p13c + p14d
+
+```
+
+# Natural Disaster: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p15 <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p16 <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p15 + p16
+
+```
+
+# Natural Disaster: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p15a <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p16b <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p15a + p16b
+
+```
+
+
+# Natural Disaster: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p15c <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p16d <- df_long %>%
+  filter(Risk == "NaturalDisast" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Natural Disaster Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p15c + p16d
+
+```
+
+# Nuclear power plant incident: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p17 <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p18 <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p17 + p18
+
+```
+
+# Nuclear power plant incident: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p17a <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p18b <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p17a + p18b
+
+```
+
+# Nuclear power plant incident: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p17c <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p18d <- df_long %>%
+  filter(Risk == "NuclPowerPlant" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Nuclear Power Plant Incident Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p17c + p18d
+
+```
+
+
+# Social / Political Domain
+
+- Illegal immigration
+- Political corruption
+- Economic crisis
+
+# Illegal immigration: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p19 <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p20 <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p19 + p20
+
+```
+
+# Illegal immigration: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p19a <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p20b <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p19a + p20b
+
+```
+
+# Illegal immigration: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p19c <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p20d <- df_long %>%
+  filter(Risk == "IllegImmigrat" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Illegal Immigration Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p19c + p20d
+
+```
+
+
+# Political Corruption: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p21 <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p22 <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p21 + p22
+
+```
+
+# Political Corruption: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p21a <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p22b <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p21a + p22b
+
+```
+
+# Political Corruption: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p21c <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p22d <- df_long %>%
+  filter(Risk == "PolitCorrupt" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Political Corruption Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p21c + p22d
+
+```
+
+
+# Economic crisis: Affect Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p23 <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p24 <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Affect") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Affect)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p23 + p24
+
+```
+
+# Economic crisis: Probability Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p23a <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p24b <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Probs") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Probability)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p23a + p24b
+
+```
+
+# Economic crisis: Consequentialist Dimension
+
+```{r, fig.width=12, fig.height=6}
+
+# Histogramm LeftRightPolitValue
+p23c <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Histogramm LibConsPolitValue
+p24d <- df_long %>%
+  filter(Risk == "EconCrisis" & Risk_Dimension == "Sever") %>% 
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  labs(title = "Economic Crisis Risk Perception",
+       x = "Risk Perception (Consequentialist)", 
+       y = "Frequency") + 
+  scale_fill_viridis_d(name = "Liberal-Conservative") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Kombination der beiden Plots nebeneinander
+p23c + p24d
+
+```
+
+## Facet Plots by Domains
+
+In this analysis, facet plots were created for each of the four domains — Health, Crime, Nature, Social/Political, to provide an overview of participants' risk perception. Each domain includes two facet plots: one displaying the relationship between risk perception and political orientation on the Left-Right scale, and the other on the Liberal-Conservative scale.
+
+Compared to the previous individual risk visualizations, which were useful for detailed examination, these facet plots offer a more effective way to compare risk perception across the domains and dimensions. The plots visualize all three dimensions of risk perception — Affect, Probability, and Consequentialist.
+In contrast to the individual plots for each risk, where the y-axis was allowed to vary to best represent the distribution within each risk, the facet plots presented here use a fixed y-axis scale across all risks and dimensions within each domain. This makes it easier to directly compare the frequency distributions between different risks and dimensions because the differences in bar heights reflect actual differences in the data and not changes in the scale. As a result, it makes the comparison of risk perceptions across the domains clearer and more understandable.
+
+For improved clarity, facet labels were adjusted. Abbreviated dimensions (e.g., "Probs" for Probability and "Sever" for Consequentialist) were renamed to enhance the readability and interpretability of the plot labels. Risk factors were also more precisely named to facilitate easier interpretation and association.
+
+These visualizations provide an efficient means to identify patterns and differences in risk perception across dimensions and political orientations.
+
+```{r}
+# Check which risks are present in the Dataframe to rename them in the visualizations
+unique(df_long$Risk)
+
+```
+# Health Domain: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=6}
+df_long %>%
+  filter(Risk %in% c("Vaccination", "ViralPandemic", "MentHealthProb")) %>%  # Filter for health domain risks
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "Vaccination" = "Vaccination",
+                 "ViralPandemic" = "Viral Pandemic",
+                 "MentHealthProb" = "Mental Health Problems" # renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist" # renaming
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Health Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+# Health Domain: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=6}
+df_long %>%
+  filter(Risk %in% c("Vaccination", "ViralPandemic", "MentHealthProb")) %>%  # Filter for health domain risks
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "Vaccination" = "Vaccination",
+                 "ViralPandemic" = "Viral Pandemic",
+                 "MentHealthProb" = "Mental Health Problems" # renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist" # renaming
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Health Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+# Crime Domain: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=6}
+df_long %>%
+  filter(Risk %in% c("SexAssault", "GunViol", "Terrorism")) %>%  # Filter for crime domain risks
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "SexAssault" = "Sexual Assault",
+                 "GunViol" = "Gun Violence",
+                 "Terrorism" = "Terrorism" # renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist" # renaming
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Crime Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+# Crime Domain: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=6}
+df_long %>%
+  filter(Risk %in% c("SexAssault", "GunViol", "Terrorism")) %>%  # Filter for crime domain risks
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "SexAssault" = "Sexual Assault",
+                 "GunViol" = "Gun Violence",
+                 "Terrorism" = "Terrorism" # renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist" # renaming
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Crime Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+
+# Nature Domain: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=6}
+
+df_long %>%
+  filter(Risk %in% c("ClimateChange", "NaturalDisast", "NuclPowerPlant")) %>%  # Filter for nature domain risks
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed",
+             labeller = labeller(
+               Risk = c(
+                 "ClimateChange" = "Climate Change",
+                 "NaturalDisast" = "Natural Disaster",
+                 "NuclPowerPlant" = "Nuclear Power Plant Incident"
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Nature Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Nature Domain: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=6}
+
+df_long %>%
+  filter(Risk %in% c("ClimateChange", "NaturalDisast", "NuclPowerPlant")) %>%  # Filter for nature domain risks
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed",
+             labeller = labeller(
+               Risk = c(
+                 "ClimateChange" = "Climate Change",
+                 "NaturalDisast" = "Natural Disaster",
+                 "NuclPowerPlant" = "Nuclear Power Plant Incident"
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Nature Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Social/Political Domain: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=6}
+
+df_long %>%
+  filter(Risk %in% c("IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%  # Filter for social/political domain risks
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed",
+             labeller = labeller(
+               Risk = c(
+                 "IllegImmigrat" = "Illegal Immigration",
+                 "PolitCorrupt" = "Political Corruption",
+                 "EconCrisis" = "Economic Crisis"
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Social/Political Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+# Social/Political Domain: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=6}
+
+df_long %>%
+  filter(Risk %in% c("IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%  # Filter for social/political domain risks
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) + 
+  geom_histogram(binwidth = 0.5, alpha = 0.7) + 
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed",
+             labeller = labeller(
+               Risk = c(
+                 "IllegImmigrat" = "Illegal Immigration",
+                 "PolitCorrupt" = "Political Corruption",
+                 "EconCrisis" = "Economic Crisis"
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"
+               )
+             )) + 
+  labs(
+    title = "Risk Perception in the Social/Political Domain",
+    x = "Risk Perception",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") + 
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+## Facet Plots by Dimensions
+
+In this visualization, all 12 risks are shown in the three dimensions (Affect, Probability and Consequentialist). There are two facet plots for each dimension: One showing the perception of the risks in relation to the Left-Right scale, and another showing the perception based on the Lib-Con scale. This arrangement makes it possible to directly compare and analyze the risks within a dimension. This structure also contributes to greater clarity, as it allows to focus on individual dimensions and political scales.
+
+To provide a clear and structured overview, the twelve risks were grouped according to their thematic domains. The three risks belonging to each domain (Health, Crime, Nature, Social/Political) are arranged in a single row within the facet plots. As there are four domains in total, this results in four rows.
+
+
+# Affect Dimension: Left-Right Political Values
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Affect") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) +
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  # 3 columns
+    nrow = 4,  # 4 rows
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Affect Dimension",
+    x = "Risk Perception (Affect)",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Affect Dimension: Liberal-Conservative Values
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Affect") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) +  # political scale
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  # 3 columns
+    nrow = 4,  # 4 rows
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Affect Dimension",
+    x = "Risk Perception (Affect)",
+    y = "Frequency",
+    fill = "Political Orientation (Lib-Con)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+# Probability Dimension: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Probs") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) +
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  
+    nrow = 4,  
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Probability Dimension",
+    x = "Risk Perception (Probability)",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Probability Dimension: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Probs") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) +
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  
+    nrow = 4,  
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Probability Dimension",
+    x = "Risk Perception (Probability)",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Consequentialist Dimension: Left-Right Political Values
+
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Sever") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LeftRightPolitValue))) +
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  
+    nrow = 4,  
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Consequentialist Dimension",
+    x = "Risk Perception (Consequentialist)",
+    y = "Frequency",
+    fill = "Political Orientation (Left-Right)"
+  ) +
+  scale_fill_viridis_d(name = "Left-Right") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Consequentialist Dimension: Liberal-Conservative Political Values
+
+```{r, fig.width=12, fig.height=7}
+
+df_long %>%
+  filter(Risk_Dimension == "Sever") %>%
+  mutate(Risk = fct_relevel(Risk, 
+                            # Health
+                            "Vaccination", "ViralPandemic", "MentHealthProb", 
+                            # Crime
+                            "SexAssault", "GunViol", "Terrorism", 
+                            # Nature
+                            "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                            # Social/Political
+                            "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+  ggplot(aes(x = Rating, fill = factor(LibConsPolitValue))) +
+  geom_histogram(binwidth = 0.5, alpha = 0.7) +
+  
+  facet_wrap(
+    ~ Risk, 
+    scales = "fixed", 
+    ncol = 3,  
+    nrow = 4,  
+    labeller = labeller(
+      Risk = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "Risk Perception for the Consequentialist Dimension",
+    x = "Risk Perception (Consequentialist)",
+    y = "Frequency",
+    fill = "Political Orientation (Liberal-Conservative)"
+  ) +
+  scale_fill_viridis_d(name = "Lib-Con") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+
+## Visualizations of the Relationship Between Political Orientation and Risk Perception by Dimensions
+
+To complement the previous visualizations, scatterplots were created for each risk to illustrate the relationship between political orientation and risk perception. These scatterplots allow for a more direct examination of potential correlations between an individual's political views (measured on Left-Right and Liberal-Conservative scales) and their perceived risk.
+
+Again, for each of the three risk perception dimensions (Affect, Probability, Consequentialist), separate facet plots were created. This organization makes it easier to compare the relationship between political orientation and risk perception within each dimension across all risks.
+
+Regression lines are included to highlight general trends and the direction of the relationship between political orientation and risk perception. Also, patterns, correlations, and outliers become more visible compared to other types of visualizations like histograms.
+
+
+# Affect Dimension: (work in progress -> maybe Spearman?)
+
+For the "Affect" dimension, I calculated two correlation coefficients: one for the Left-Right political orientation and Risk perception, and another for the Liberal-Conservative political orientation and Risk perception across all risks.
+
+Additionally, I computed the correlation for each individual risk, considering both political orientations (Left-Right and Liberal-Conservative) and their respective relationship with Risk perception. This provides a detailed view of the associations for each specific risk.
+
+For the Affect dimension, the correlation coefficients calculated across all risks were:
+
+Left-Right political orientation and Risk perception: -0.0127 (very weak negative correlation)
+Liberal-Conservative political orientation and Risk perception: -0.0222 (very weak negative correlation)
+
+The correlation values are very close to 0, which means that political orientation has no significant influence on risk perception, at least in this dimension (Affect). A negative correlation (as shown here) could theoretically indicate that risk perception decreases slightly with a stronger political orientation in one direction (e.g. to the left or right), but the value is so low that it has practically no significance.
+
+In short, political orientation has no strong influence on risk perception in the Affect dimension.
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk_Dimension_f == "Affect") %>%  # choose Dimension
+  mutate(Risk_f = fct_relevel(Risk_f, 
+                              # Health
+                              "Vaccination", "ViralPandemic", "MentHealthProb", 
+                              # Crime
+                              "SexAssault", "GunViol", "Terrorism", 
+                              # Nature
+                              "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                              # Social/Political
+                              "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +
+  
+  # points
+  geom_jitter(alpha = .2) +
+  
+  # Regressionsline for LeftRightPolitValue (blue)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regressionsline for LibConsPolitValue (red)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+
+  # Facets by risk, sorted by domain
+  facet_wrap(
+    ~ Risk_f, 
+    scales = "fixed",    # same axis for a better comparison
+    ncol = 3,            # 3 columns
+    nrow = 4,            # 4 rows
+    labeller = labeller(
+      Risk_f = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "The Impact of Political Orientation on Risk Perception (Affect)",
+    x = "Political Orientation",
+    y = "Risk Perception (Affect)",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+
+  # colors
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+
+```
+
+# Affect Dimension: Correlations (work in progress -> maybe Spearman?)
+
+```{r}
+# Calculate the correlation coefficients
+correlation_lr_value_A <- df_long %>%
+  filter(Risk_Dimension_f == "Affect") %>%
+  summarise(correlation_lr = cor(LeftRightPolitValue, Rating, method = "pearson")) %>%
+  pull(correlation_lr)
+
+correlation_libcon_value_A <- df_long %>%
+  filter(Risk_Dimension_f == "Affect") %>%
+  summarise(correlation_libcon = cor(LibConsPolitValue, Rating, method = "pearson")) %>%
+  pull(correlation_libcon)
+
+print(correlation_lr_value_A)
+print(correlation_libcon_value_A)
+
+# Calculate the correlation for each risk
+correlations_A <- df_long %>%
+  filter(Risk_Dimension_f == "Affect") %>%
+  group_by(Risk) %>%
+  summarise(
+    correlation_lr = cor(LeftRightPolitValue, Rating, method = "pearson"),
+    correlation_libcon = cor(LibConsPolitValue, Rating, method = "pearson")
+  )
+
+# Display the correlations
+print(correlations_A)
+
+
+```
+
+## Visualization of the Relationship Between Political Identity and Risk Perception (Probability Dimension)
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk_Dimension_f == "Probs") %>%  # choose the correct Dimension
+  mutate(Risk_f = fct_relevel(Risk_f, 
+                              # Health
+                              "Vaccination", "ViralPandemic", "MentHealthProb", 
+                              # Crime
+                              "SexAssault", "GunViol", "Terrorism", 
+                              # Nature
+                              "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                              # Social/Political
+                              "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +
+  
+  # points
+  geom_jitter(alpha = .2) +
+  
+  # Regressionsline for LeftRightPolitValue (blue)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regressionsline for LibConsPolitValue (red)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+
+  # Facets by risk, sorted by domain
+  facet_wrap(
+    ~ Risk_f, 
+    scales = "fixed",    # same axis for a better comparison
+    ncol = 3,            # 3 columns
+    nrow = 4,            # 4 rows
+    labeller = labeller(
+      Risk_f = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "The Impact of Political Orientation on Risk Perception (Probability)",
+    x = "Political Orientation",
+    y = "Risk Perception (Probability)",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+
+  # colors
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+## Visualization of the Relationship Between Political Identity and Risk Perception (Consequentialist Dimension)
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk_Dimension_f == "Sever") %>%  # choose the correct Dimension
+  mutate(Risk_f = fct_relevel(Risk_f, 
+                              # Health
+                              "Vaccination", "ViralPandemic", "MentHealthProb", 
+                              # Crime
+                              "SexAssault", "GunViol", "Terrorism", 
+                              # Nature
+                              "ClimateChange", "NaturalDisast", "NuclPowerPlant", 
+                              # Social/Political
+                              "IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%
+
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +
+  
+  # points
+  geom_jitter(alpha = .2) +
+  
+  # Regressionsline for LeftRightPolitValue (blue)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regressionsline for LibConsPolitValue (red)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+
+  # Facets by risk, sorted by domain
+  facet_wrap(
+    ~ Risk_f, 
+    scales = "fixed",    # same axis for a better comparison
+    ncol = 3,            # 3 columns
+    nrow = 4,            # 4 rows
+    labeller = labeller(
+      Risk_f = c(
+        "Vaccination" = "Vaccination",
+        "ViralPandemic" = "Viral Pandemic",
+        "MentHealthProb" = "Mental Health Problems",
+        "SexAssault" = "Sexual Assault",
+        "GunViol" = "Gun Violence",
+        "Terrorism" = "Terrorism",
+        "ClimateChange" = "Climate Change",
+        "NaturalDisast" = "Natural Disaster",
+        "NuclPowerPlant" = "Nuclear Power Plant Incident",
+        "IllegImmigrat" = "Illegal Immigration",
+        "PolitCorrupt" = "Political Corruption",
+        "EconCrisis" = "Economic Crisis"
+      )
+    )
+  ) +
+  
+  labs(
+    title = "The Impact of Political Orientation on Risk Perception (Consequentialist)",
+    x = "Political Orientation",
+    y = "Risk Perception (Consequentialist)",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+
+  # colors
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+## Visualizations of the Relationship Between Political Orientation and Risk Perception by Domains
+
+Now the same is done, the scatterplots are simply listed by domains.
+
+# Health Domain:
+
+- Mental Health Problems:
+Affect dimension: the regression line shows a slightly negative slope
+Probability dimension: the regression line slopes more downward, indicating a more negative relationship
+Consequentialist dimension: the regression line starts higher on the risk perception axis, suggesting that the perceived risk of mental health problems is generally higher across political orientations compared to the other dimensions, and the line is flatter
+
+- Vaccination:
+
+Affect dimension: the regression line shows a positive slope
+Probability dimension: the regression line is flatter, implying a weaker relationship between political orientation and perceived risk
+Consequentialist dimension: the line behaves similarly to the Affect dimension, but it starts higher on the risk perception axis, suggesting a higher perception of risk
+
+- Viral Pandemic:
+
+Affect dimension: the regression line slopes downward, indicating a negative correlation between political orientation and risk perception
+Probability dimension: the regression line is flatter, indicating a weaker relationship between political orientation and the perceived risk of viral pandemics
+Consequentialist dimension: the regression line is similar to the Affect dimension, but it starts higher on the risk perception axis, reflecting a higher perception of risk
+
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk %in% c("Vaccination", "ViralPandemic", "MentHealthProb")) %>%  # Filter for health risks
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +  # X: Political orientation, Y: Risk perception
+  
+  # Points (Scatter)
+  geom_jitter(alpha = .2) + 
+  
+  # Regression line for LeftRightPolitValue (blue line)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regression line for LibConsPolitValue (red line)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Faceting by Risk and Dimension
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "Vaccination" = "Vaccination",
+                 "ViralPandemic" = "Viral Pandemic",
+                 "MentHealthProb" = "Mental Health Problems"  # Renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"  # Renaming
+               )
+             )) + 
+  
+  labs(
+    title = "Risk Perception in the Health Domain by Political Orientation",
+    x = "Political Orientation",
+    y = "Risk Perception",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+  
+  # Colors for the lines
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+  
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+# Crime Domain:
+
+- Sexual assault:
+
+Affect dimension: the regression line shows a slightly negative slop
+Probability dimension: the regression line starts lower on the risk perception axis, indicating that the perceived risk of sexual assault is lower across all political orientations compared to the Affect dimension
+Consequentialist dimension: the regression line starts very high on the risk perception axis, suggesting that the perceived risk of sexual assault is much higher across all political orientations compared to the other dimensions
+
+- Gun violence:
+
+Affect dimension: the regression line declines significantly
+Probability dimension: the regression line is relatively flat, suggesting a weaker or negligible relationship between political orientation and perceived risk of gun violence
+Consequentialist dimension: the regression line starts the highest on the risk perception axis, indicating that the perceived risk of gun violence is higher across all political orientations compared to the other dimensions. Despite this, the slope of the line is slightly negative
+
+- Terrorism:
+
+Affect dimension: the regression line shows a very slight positive slope
+Probability dimension:  the regression line starts lower on the risk perception axis, suggesting that the perceived probability of terrorism is generally lower compared to the other dimensions. The slope is nearly flat, indicating a weak or negligible relationship between political orientation and perceived probability of terrorism
+Consequentialist dimension: the regression line starts the highest on the risk perception axis, indicating that terrorism is perceived as a higher risk in this dimension across all political orientations. Additionally, the line shows a slight positive slope, suggesting that as political orientation shifts, the perceived consequences of terrorism slightly increase
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk %in% c("SexAssault", "GunViol", "Terrorism")) %>%  # Filter for crime risks
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +  # X: Political orientation, Y: Risk perception
+  
+  # Points (Scatter)
+  geom_jitter(alpha = .2) + 
+  
+  # Regression line for LeftRightPolitValue (blue line)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regression line for LibConsPolitValue (red line)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Faceting by Risk and Dimension
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "SexAssault" = "Sexual Assault",
+                 "GunViol" = "Gun Violence",
+                 "Terrorism" = "Terrorism"  # Renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"  # Renaming
+               )
+             )) + 
+  
+  labs(
+    title = "Risk Perception in the Crime Domain by Political Orientation",
+    x = "Political Orientation",
+    y = "Risk Perception",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+  
+  # Colors for the lines
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+  
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+# Nature Domain:
+
+- Climate change:
+
+Affect dimension: the regression line shows a strong negative slope
+Probability dimension: the regression line shows a strong negative slope
+Consequentialist dimension: the regression line shows a strong negative slope
+
+- Natural disaster:
+
+Affect dimension: the regression line shows a slight negative slope, although it almost looks flat, suggests a very weak relationship between political orientation and the perceived risk of natural disasters
+Probability dimension: the regression line is almost horizontal
+Consequentialist dimension: the regression line is also relatively flat, but it is positioned higher on the risk perception axis
+
+- Nuclear power plant incident:
+
+Affect dimension: the regression line shows a slight negative slope, indicating a weak negative relationship between political orientation and perceived risk
+Probability dimension: the regression line is positioned lower on the risk perception axis
+Consequentialist dimension: the regression line starts at the highest point on the risk perception axis
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk %in% c("ClimateChange", "NaturalDisast", "NuclPowerPlant")) %>%  # Filter for nature-related risks
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +  # X: Political orientation, Y: Risk perception
+  
+  # Points (Scatter)
+  geom_jitter(alpha = .2) + 
+  
+  # Regression line for LeftRightPolitValue (blue line)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regression line for LibConsPolitValue (red line)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Faceting by Risk and Dimension
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "ClimateChange" = "Climate Change",
+                 "NaturalDisast" = "Natural Disaster",
+                 "NuclPowerPlant" = "Nuclear Power Plant Incident"  # Renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"  # Renaming
+               )
+             )) + 
+  
+  labs(
+    title = "Risk Perception in the Nature Domain by Political Orientation",
+    x = "Political Orientation",
+    y = "Risk Perception",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+  
+  # Colors for the lines
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+  
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+# Social/Political Domain:
+
+- Illegal immigration:
+
+Affect dimension: the regression line shows a strong positive slope, as political orientation shifts to the right, the perception of risk associated with illegal immigration increases
+Probability dimension: the regression line is somewhat flatter compared to the Affect dimension. While there is still a positive slope, the relationship between political orientation and perceived probability of illegal immigration occurring is weaker
+Consequentialist dimension: the regression line shows a similar positive slope to that of the Affect dimension, though it is less steep
+
+- Political corruption:
+
+Affect dimension: negative relationship, as political orientation shifts from left to right, individuals tend to perceive illegal immigration as a lesser threat
+Probability dimension: the regression line seems slightly more negative compared to Affect
+Consequentialist dimension: the regression line seems to be flat, slightly negative
+
+- Economic crisis:
+
+Affect dimension: the regression line shows a slightly negative relationship
+Probability dimension: the regression line shows a similar trend to the Affect dimension but appears slightly lower on the risk perception axis
+Consequentialist dimension: the line appears flat with the line being the highest at the risk perception axis. But there is a slight upward slope, though it is very minimal
+
+```{r, fig.width=12, fig.height=8}
+
+df_long %>%
+  filter(Risk %in% c("IllegImmigrat", "PolitCorrupt", "EconCrisis")) %>%  # Filter for political/social risks
+  ggplot(aes(x = LibConsPolitValue, y = Rating)) +  # X: Political orientation, Y: Risk perception
+  
+  # Points (Scatter)
+  geom_jitter(alpha = .2) + 
+  
+  # Regression line for LeftRightPolitValue (blue line)
+  geom_smooth(aes(x = LeftRightPolitValue, color = "LeftRightPolitValue", linetype = "LeftRightPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Regression line for LibConsPolitValue (red line)
+  geom_smooth(aes(x = LibConsPolitValue, color = "LibConsPolitValue", linetype = "LibConsPolitValue"), 
+              method = "lm", se = FALSE) +
+  
+  # Faceting by Risk and Dimension
+  facet_wrap(Risk ~ Risk_Dimension, scales = "fixed", 
+             labeller = labeller(
+               Risk = c(
+                 "IllegImmigrat" = "Illegal Immigration",
+                 "PolitCorrupt" = "Political Corruption",
+                 "EconCrisis" = "Economic Crisis"  # Renaming
+               ),
+               Risk_Dimension = c(
+                 "Affect" = "Affect",
+                 "Probs" = "Probability",  
+                 "Sever" = "Consequentialist",  
+                 "Probability" = "Probability",
+                 "Consequentialist" = "Consequentialist"  # Renaming
+               )
+             )) + 
+  
+  labs(
+    title = "Risk Perception in the Social/Political Domain by Political Orientation",
+    x = "Political Orientation",
+    y = "Risk Perception",
+    color = "Political Orientation",
+    linetype = "Political Orientation"
+  ) +
+  
+  # Colors for the lines
+  scale_color_manual(values = c("LeftRightPolitValue" = "blue", "LibConsPolitValue" = "red")) +
+  scale_linetype_manual(values = c("LeftRightPolitValue" = "solid", "LibConsPolitValue" = "dashed")) +
+  
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+```
+
+## Mixed Model Effects Political Values
+
+In this section, a mixed effects model was applied to examine the relationship between political orientation (liberal-conservative and left-right values) and risk perception ratings. The dependent variable (Rating) represents the individual risk ratings, while the independent variables are LibConsPolitValue (liberal-conservative political orientation) and LeftRightPolitValue (left-right political orientation). Random effects were included for the individual participants (id) to account for within-subject variability. The model was estimated using the lmer() function, with the results summarized using the summary() function to assess the influence of political orientation on risk perception.
+
+## Results Mixed Model Effects Political Values
+ 
+- Intercept (5.170627):
+The intercept represents the value of risk perception (Rating) when both political orientations (LibConsPolitValue and LeftRightPolitValue) are 0. In this case, the value of 5.17 means that individuals who identify as both extremely left-wing (0 on the Left-Right scale) and extremely liberal (0 on the Liberal-Conservative scale) have an average risk perception of about 5.17 on the scale.
+
+
+- Lib-Cons Political Value (-0.044419):
+The negative value of -0.0444 means that with increasing conservatism (higher values on the Lib-Cons Political Value scale), risk perception tends to decrease. Specifically, if the value of liberal-conservative orientation increases by 1 point (e.g., from 2 to 3), the risk perception decreases by 0.0444 points. This effect is crucial, suggesting that it plays an important role in the data analysis. Suggesting that the values in this political scale have a significant effect on the risk rating.
+
+
+- Left-Right Political Value (0.001733):
+The Left-Right Political Value effect has a very small positive coefficient of 0.0017. This means that there is a slight positive relationship between left-right political orientation and risk perception. However, this effect is very small and not statistically significant, as indicated by the low t-value (0.083). In other words, the left-right distinction likely does not have a substantial impact on risk perception.
+
+
+Summary:
+- Lib-Cons Political Value has a significant negative effect on risk perception: the more conservative a person is, the less risky the risks are perceived.
+- Left-Right Political Value shows no significant effect: the difference between left and right political orientation does not have a notable impact on risk perception in this model.
+
+```{r}
+mixed_model_polit <- lmer(Rating ~ LibConsPolitValue + LeftRightPolitValue + (1|id), data = df_long)
+
+summary(mixed_model_polit)
+
+```
+
+## Mixed Model Effects Political Values, Age, Education, Gender
+
+
+This linear mixed effects model is designed to predict risk perception ratings (Rating) while accounting for both fixed and random effects. The dependent variable is the risk perception rating, which is influenced by several factors, including:
+
+-	Risk type (Risk_f) and Risk dimension (Risk_Dimension_f), representing the type of risk (e.g., climate change, immigration) and the dimension of risk (e.g., affect, probability, consequentialist). The interaction between these two factors is included to examine how they together influence risk perception.
+
+- Political orientation variables: Lib-Cons Political Value (liberal-conservative political orientation) and Left-Right Political Value (left-right political orientation), included to assess how political views affect the perception of risk.
+
+-	Demographic factors, such as gender, age, and education, are also included to control for their potential impact on risk perception.
+The model also includes a random intercept for each participant ((1|id)), which allows the baseline level of risk perception to vary across individuals. This random effect accounts for individual differences that are not explained by the fixed predictors.
+
+In summary, this model aims to identify how different risk factors, political views, and demographic characteristics influence individual perceptions of risk, while considering individual variability in baseline risk perception. 
+
+## Results Mixed Model Effects Political Values, Age, Education, Gender
+
+- Lib-Cons Political Value (-0.047156):
+LibConsPolitValue shows that with a more conservative attitude (higher values on the scale from 0 to 10), the perception of risks is lower. This means that more conservative people (high values on the LibConsPolitValue scale) perceive these risks as less threatening.
+
+- Left-Right Political Value (0.042765):
+LeftRightPolitValue shows that with a more right-wing attitude (higher values on the scale from 0 to 10), the perception of risks increases.  
+
+```{r}
+mixed_model <- lmer(Rating ~ Risk_f * Risk_Dimension_f + LibConsPolitValue  +LeftRightPolitValue + gender + age +
+education + (1| id), data = df_long)
+
+
+mixed_model <- lmer(Rating ~ Risk_f * Risk_Dimension_f + LibConsPolitValue: Risk_f  + gender + age +
+education + (1| id), data = df_long)
+
+
+
+mixed_model <- lmer(Rating ~ Risk_f * Risk_Dimension_f + LibConsPolitValue: Risk_f + LibConsPolitValue:Risk_Dimension_f  + gender + age +
+education + (1| id), data = df_long)
+
+summary(mixed_model)
+
+# mixed_model <- lmer(Rating ~ Risk_f * Risk_Dimension_f + LibConsPolitValue + LeftRightPolitValue + gender + age + education + 
+ #                   (1|id) + (1|Risk_f) + (1|Risk_Domain_f) + (1|Risk_Dimension_f),
+  #                  data = df_long)
+```
+
+## Visualization Idea
+
+The goal of the visualization is to display the relationship between political orientation and risk perception for various risks. The political scale is divided into three categories: "Very Left" (values ≤ 3), "Middle" (values between 4-7), and "Very Right" (values ≥ 8). For each risk, the average risk perception is calculated and plotted along the x-axis, while the different risks are listed on the y-axis. Each risk is represented by three distinct points corresponding to the political categories (left, middle, and right). This visualization provides a clear comparison of how political orientation influences risk perception across different domains (e.g., Health, Crime, Nature, Social/Political). 
+
+
+```{r}
+
+colnames(df_long)
+
+# Neue Spalte für die politische Orientierung hinzufügen (Links, Mitte, Rechts)
+df_long1 <- df_long %>%
+  mutate(
+    Politische_Orientierung = case_when(
+      LeftRightPolitValue < 3 ~ "Links",  # Links für Werte unter 3
+      LeftRightPolitValue >= 3 & LeftRightPolitValue <= 7 ~ "Mitte",  # Mitte für Werte zwischen 3 und 7
+      LeftRightPolitValue > 7 ~ "Rechts",  # Rechts für Werte über 7
+      TRUE ~ NA_character_  # Falls es NA-Werte gibt
+    )
+  )
+
+
+# Überprüfen, ob die neue Spalte korrekt erstellt wurde
+head(df_long1)
+
+```
+
+
+
+```{r}
+
+
+
+```
+
+
+Es wird eine neue Spalte für die politische Orientierung hinzugefügt, und diese wird in drei Kategorien unterteilt: Very Left, Middle, Very Right.
+Die Risiken werden in verständlichere Bezeichner umbenannt und in vier Domänen unterteilt: Health, Crime, Nature, Social/Political.
+Dann wird der Durchschnitt der Risikowahrnehmung nach politischer Orientierung und Risikodimension berechnet.
+Die drei Dimensionen der Risikowahrnehmung (Affect, Probability, Consequentialist) sind also in dieser Visualisierung nicht berücksichtigt, sondern es wird der Durchschnitt über alle drei Dimensionen hinweg gebildet.
+
+```{r, fig.width=10, fig.height=8}
+
+# Ensure that risk labels are correctly assigned
+df_aggregated <- df_long %>%
+  mutate(
+    PolitCategory = case_when(
+      LeftRightPolitValue <= 3 ~ "Very Left",
+      LeftRightPolitValue >= 8 ~ "Very Right",
+      TRUE ~ "Middle"
+    ),
+    PolitCategory = factor(PolitCategory, levels = c("Very Left", "Middle", "Very Right")),  # Set the factor levels correctly
+    Risk_f = recode(Risk_f, 
+                    "Vaccination" = "Vaccination", 
+                    "ViralPandemic" = "Viral Pandemic",
+                    "MentHealthProb" = "Mental Health Problems",  # Correct here
+                    "SexAssault" = "Sexual Assault",
+                    "GunViol" = "Gun Violence",
+                    "Terrorism" = "Terrorism",
+                    "ClimateChange" = "Climate Change",
+                    "NaturalDisast" = "Natural Disaster",
+                    "NuclPowerPlant" = "Nuclear Power Plant",
+                    "IllegImmigrat" = "Illegal Immigration",
+                    "PolitCorrupt" = "Political Corruption",
+                    "EconCrisis" = "Economic Crisis"),
+    RiskDomain = case_when(
+      Risk_f %in% c("Vaccination", "Viral Pandemic", "Mental Health Problems") ~ "Health",
+      Risk_f %in% c("Sexual Assault", "Gun Violence", "Terrorism") ~ "Crime",
+      Risk_f %in% c("Climate Change", "Natural Disaster", "Nuclear Power Plant") ~ "Nature",
+      Risk_f %in% c("Illegal Immigration", "Political Corruption", "Economic Crisis") ~ "Social/Political",
+      TRUE ~ "Other"
+    )
+  )
+
+# Make sure there are no NA values
+df_aggregated <- df_aggregated %>% 
+  filter(!is.na(Rating))
+
+# Calculate the mean of the risk perception
+df_agg_mean <- df_aggregated %>%
+  group_by(PolitCategory, RiskDomain, Risk_f) %>%
+  summarise(MeanRating = mean(Rating, na.rm = TRUE), .groups = 'drop')
+
+# Manually set the order for the y-axis based on the domain and risk rank
+df_agg_mean$Risk_f <- factor(df_agg_mean$Risk_f, levels = c(
+  "Vaccination", "Mental Health Problems", "Viral Pandemic", # Health
+  "Sexual Assault", "Gun Violence", "Terrorism",              # Crime
+  "Climate Change", "Natural Disaster", "Nuclear Power Plant",# Nature
+  "Illegal Immigration", "Political Corruption", "Economic Crisis" # Social/Political
+))
+
+# Scatter plot for mean risk perception
+x <- df_agg_mean %>%
+  ggplot(aes(x = MeanRating, y = Risk_f, color = PolitCategory)) + 
+  geom_point(size = 4, alpha = 0.7) +  # Point size and transparency
+  scale_color_manual(values = c("Very Left" = "#4f81bd", 
+                                "Middle" = "#F2CB00", 
+                                "Very Right" = "#D84A2E")) +  # Custom color scale for political orientation
+  labs(title = "Mean Risk Perception by Political Orientation",
+       x = "Mean Risk Perception",
+       y = "Risk",
+       color = "Political Orientation") +
+  scale_x_continuous(limits = c(0, 10)) +  # Set the horizontal axis from 0 to 10
+  theme_minimal() +  # Clean and simple appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+
+
+# Display the plot
+print(x)
+
+
+```
+# spider plot first try
+
+```{r, fig.width=10, fig.height=8}
+
+
+# Schritt 1: Aggregieren
+df_aggregated <- df_long %>%
+  mutate(
+    PolitCategory = case_when(
+      LeftRightPolitValue <= 3 ~ "Very Left",
+      LeftRightPolitValue >= 8 ~ "Very Right",
+      TRUE ~ "Middle"
+    ),
+    PolitCategory = factor(PolitCategory, levels = c("Very Left", "Middle", "Very Right")),
+    Risk_f = recode(Risk_f, 
+                    "Vaccination" = "Vaccination", 
+                    "ViralPandemic" = "Viral Pandemic",
+                    "MentHealthProb" = "Mental Health Problems",
+                    "SexAssault" = "Sexual Assault",
+                    "GunViol" = "Gun Violence",
+                    "Terrorism" = "Terrorism",
+                    "ClimateChange" = "Climate Change",
+                    "NaturalDisast" = "Natural Disaster",
+                    "NuclPowerPlant" = "Nuclear Power Plant",
+                    "IllegImmigrat" = "Illegal Immigration",
+                    "PolitCorrupt" = "Political Corruption",
+                    "EconCrisis" = "Economic Crisis"),
+    RiskDomain = case_when(
+      Risk_f %in% c("Vaccination", "Viral Pandemic", "Mental Health Problems") ~ "Health",
+      Risk_f %in% c("Sexual Assault", "Gun Violence", "Terrorism") ~ "Crime",
+      Risk_f %in% c("Climate Change", "Natural Disaster", "Nuclear Power Plant") ~ "Nature",
+      Risk_f %in% c("Illegal Immigration", "Political Corruption", "Economic Crisis") ~ "Social/Political",
+      TRUE ~ "Other"
+    )
+  )
+
+# Schritt 2: Mittelwerte pro Domäne berechnen
+df_agg_mean_domain <- df_aggregated %>%
+  group_by(PolitCategory, RiskDomain) %>%
+  summarise(MeanRating = mean(Rating, na.rm = TRUE), .groups = 'drop')
+
+# Schritt 3: Breitformat
+df_radar <- df_agg_mean_domain %>%
+  pivot_wider(names_from = RiskDomain, values_from = MeanRating)
+
+df_radar <- as.data.frame(df_radar)
+rownames(df_radar) <- df_radar$PolitCategory
+df_radar <- df_radar[ , -1]
+
+# Schritt 4: Daten für fmsb
+radar_data <- rbind(rep(10, ncol(df_radar)),
+                    rep(0, ncol(df_radar)),
+                    df_radar)
+
+# Schritt 5: Plotten
+colors_border <- c("#4f81bd", "#F2CB00", "#D84A2E")
+colors_in <- adjustcolor(colors_border, alpha.f = 0.2)
+
+radarchart(radar_data,
+           axistype = 1,
+           pcol = colors_border,
+           pfcol = colors_in,
+           plwd = 2,
+           cglcol = "grey",
+           cglty = 1,
+           axislabcol = "grey",
+           caxislabels = seq(0, 10, 2),
+           cglwd = 0.8,
+           vlcex = 1.2)
+
+legend(x = "topright",
+       legend = rownames(radar_data[-c(1,2),]),
+       bty = "n",
+       pch = 20,
+       col = colors_border,
+       text.col = "black",
+       cex = 1.2,
+       pt.cex = 3)
+
+
+
+# Heatmap für die mittlere Risikowahrnehmung in Abhängigkeit von den Domänen und politischen Orientierungen
+ggplot(df_agg_mean_domain, aes(x = RiskDomain, y = PolitCategory, fill = MeanRating)) +
+  geom_tile(color = "white") +  # Kacheln in der Heatmap
+  scale_fill_gradient(low = "#ffffcc", high = "#d73027") +  # Farbschema
+  labs(title = "Heatmap: Mean Risk Perception by Political Orientation and Domain",
+       x = "Risk Domain",
+       y = "Political Orientation",
+       fill = "Mean Rating") +  # Farblegende für die Risikowahrnehmung
+  theme_minimal() +  # Minimalistisches Design
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Achsentitel drehen für bessere Lesbarkeit
+
+
+
+# Lollipop Chart für mittlere Risikowahrnehmung je nach politischer Orientierung und Domäne
+ggplot(df_agg_mean_domain, aes(x = RiskDomain, y = MeanRating, color = PolitCategory)) +
+  geom_segment(aes(x = RiskDomain, xend = RiskDomain, y = 0, yend = MeanRating), 
+               position = position_dodge(width = 0.6), size = 1.2) +  # Segment mit Linie
+  geom_point(position = position_dodge(width = 0.6), size = 4) +  # Punkte
+  scale_color_manual(values = c("Very Left" = "#4f81bd", 
+                                "Middle" = "#F2CB00", 
+                                "Very Right" = "#D84A2E")) +  # Farben für politische Orientierung
+  labs(title = "Lollipop Chart: Mean Risk Perception by Political Orientation and Risk Domain",
+       x = "Risk Domain",
+       y = "Mean Risk Perception (0-10)",
+       color = "Political Orientation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Text rotieren für bessere Lesbarkeit
+
+install.packages("ggridges")
+library(ggridges)
+
+# Ridgeline Plot ohne den DataFrame direkt zu ändern
+ggplot(df_long, aes(x = Rating, y = case_when(
+    LeftRightPolitValue <= 3 ~ "Very Left",
+    LeftRightPolitValue >= 8 ~ "Very Right",
+    TRUE ~ "Middle"
+), fill = case_when(
+    LeftRightPolitValue <= 3 ~ "Very Left",
+    LeftRightPolitValue >= 8 ~ "Very Right",
+    TRUE ~ "Middle"
+))) +
+  geom_density_ridges(alpha = 0.7) +  # Dichtekurven für die Verteilung
+  facet_wrap(~ case_when(
+    Risk_f %in% c("Vaccination", "Viral Pandemic", "Mental Health Problems") ~ "Health",
+    Risk_f %in% c("Sexual Assault", "Gun Violence", "Terrorism") ~ "Crime",
+    Risk_f %in% c("Climate Change", "Natural Disaster", "Nuclear Power Plant") ~ "Nature",
+    Risk_f %in% c("Illegal Immigration", "Political Corruption", "Economic Crisis") ~ "Social/Political",
+    TRUE ~ "Other"
+  )) +  # Facetten für jede Risikodomain direkt im Plot
+  scale_fill_manual(values = c("Very Left" = "#4f81bd", 
+                               "Middle" = "#F2CB00", 
+                               "Very Right" = "#D84A2E")) +  # Farben für politische Orientierung
+  labs(title = "Ridgeline Plot: Risk Perception by Political Orientation and Risk Domain",
+       x = "Risk Perception",
+       y = "Political Orientation",
+       fill = "Political Orientation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(size = 12))
+
+# Erstellen eines Spaghetti-Plots
+ggplot(df_long, aes(x = education, y = Rating, group = PolitCategory, color = PolitCategory)) +
+  geom_line(alpha = 0.7, size = 1.5) +  # Linien zeichnen
+  geom_point(aes(shape = PolitCategory), size = 3) +  # Punkte zur Markierung der Werte
+  scale_color_manual(values = c("Very Left" = "#4f81bd", 
+                                "Middle" = "#F2CB00", 
+                                "Very Right" = "#D84A2E")) +  # Farben für politische Orientierung
+  labs(title = "Risikowahrnehmung über Bildungsniveaus und politische Orientierung",
+       x = "Bildungsniveau",
+       y = "Risikowahrnehmung",
+       color = "Politische Orientierung") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Achsentitel drehen für bessere Lesbarkeit
+
+
+```
+
+
+# Calculating the differences (mean values of risk perception)
+```{r}
+# Assuming df_aggregated is already defined and contains the necessary data
+
+# Calculate the mean of the risk perception
+df_agg_mean <- df_aggregated %>%
+  group_by(PolitCategory, RiskDomain, Risk_f) %>%
+  summarise(MeanRating = mean(Rating, na.rm = TRUE), .groups = 'drop')
+
+# Manually set the order for the y-axis based on the domain and risk rank
+df_agg_mean$Risk_f <- factor(df_agg_mean$Risk_f, levels = c(
+  "Vaccination", "Mental Health Problems", "Viral Pandemic", # Health
+  "Sexual Assault", "Gun Violence", "Terrorism",              # Crime
+  "Climate Change", "Natural Disaster", "Nuclear Power Plant",# Nature
+  "Illegal Immigration", "Political Corruption", "Economic Crisis" # Social/Political
+))
+
+# Calculate the mean ratings for each political orientation group
+df_table <- df_agg_mean %>%
+  spread(key = PolitCategory, value = MeanRating)
+
+# Calculate the differences between the categories
+df_table <- df_table %>%
+  mutate(
+    Diff_Left_Middle  = `Very Left` - Middle,
+    Diff_Middle_Right = Middle - `Very Right`,
+    Diff_Left_Right   = `Very Left` - `Very Right`
+  )
+
+# Print the resulting table with the differences
+print(df_table)
+
+
+```
+
+
+# Calculating the differences (quartiles)
+
+```{r, fig.width=10, fig.height=8}
+# Berechne Quartile für jede Risikowahrnehmung je politische Ausrichtung und Risiko-Domain
+df_quartiles <- df_aggregated %>%
+  group_by(PolitCategory, RiskDomain, Risk_f) %>%
+  summarise(
+    Q1 = quantile(Rating, 0.25, na.rm = TRUE),   # 25%-Quartil
+    Median = quantile(Rating, 0.50, na.rm = TRUE),# Median (50%-Quartil)
+    Q3 = quantile(Rating, 0.75, na.rm = TRUE),   # 75%-Quartil
+    IQR = Q3 - Q1,                               # Interquartilbereich (Q3 - Q1)
+    .groups = 'drop'
+  )
+
+# Zeige die berechneten Quartile an
+print(df_quartiles)
+
+# Berechne die Differenzen der Quartile (Q3 - Q1) für jede politische Gruppe und Risiko
+df_quartil_differenzen <- df_quartiles %>%
+  pivot_wider(names_from = PolitCategory, values_from = c(Q1, Median, Q3, IQR)) %>%
+  mutate(
+    Diff_Q1 = `Q1_Very Left` - `Q1_Very Right`,    # Differenz des 25%-Quartils
+    Diff_Median = `Median_Very Left` - `Median_Very Right`, # Differenz des Medians
+    Diff_Q3 = `Q3_Very Left` - `Q3_Very Right`,    # Differenz des 75%-Quartils
+    Diff_IQR = `IQR_Very Left` - `IQR_Very Right` # Differenz des Interquartilbereichs
+  )
+
+# Zeige die berechneten Differenzen an
+print(df_quartil_differenzen)
+
+
+ggplot(df_quartil_differenzen, aes(x = Risk_f, y = Diff_Q1, color = RiskDomain)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Differenz der 25%-Quartile zwischen Politisch Linken und Rechten",
+       x = "Risiko",
+       y = "Differenz 25%-Quartil (Q1)") +
+  theme_minimal()
+
+ggplot(df_quartil_differenzen, aes(x = Risk_f, y = Diff_Median, color = RiskDomain)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Differenz des Medians zwischen Politisch Linken und Rechten",
+       x = "Risiko",
+       y = "Differenz Median") +
+  theme_minimal()
+
+ggplot(df_quartil_differenzen, aes(x = Risk_f, y = Diff_Q3, color = RiskDomain)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Differenz der 75%-Quartile zwischen Politisch Linken und Rechten",
+       x = "Risiko",
+       y = "Differenz 75%-Quartil (Q3)") +
+  theme_minimal()
+
+
+
+
+```
+
+# Hierarchisches Mixed Effects Modell
+```{r}
+
+# Hierarchisches Mixed-Effects-Modell
+model <- lmer(Rating ~ LibConsPolitValue * Risk_f * Risk_Dimension + 
+              (1|id) +   # Zufälliger Effekt für Personen
+              (1|Risk_f) +     # Zufälliger Effekt für Risiko
+              (1|Risk_Dimension), # Zufälliger Effekt für Dimension
+              data = df_long)
+
+# Zusammenfassung des Modells
+summary(model)
+
+# Berechnung der gefitteten Werte
+df_long$fitted_values <- fitted(model)
+
+# Scatterplot für die "Affect"-Dimension mit gefitteten Werten
+
+
+# Filtern nach der Dimension "Affect"
+df_affect <- df_long %>%
+  filter(Risk_Dimension == "Affect")
+
+# Scatterplot
+ggplot(df_affect, aes(x = LibConsPolitValue, y = Rating, color = Risk_f)) + 
+  geom_jitter(alpha = 0.5, size = 1.5) +  # Scatterplot für tatsächliche Bewertungen
+  
+  # Gefittete Werte aus dem Modell hinzufügen
+  geom_smooth(aes(y = fitted_values, color = Risk_f), method = "lm", se = FALSE, linetype = "dashed") + 
+  
+  # Faceting nach Risiko
+  facet_wrap(~ Risk_f) + 
+  
+  labs(
+    title = "Risk Perception by Political Orientation (Affect Dimension)",
+    x = "Political Orientation (LibConsPolitValue)",
+    y = "Risk Perception (Rating)",
+    color = "Risk"
+  ) +
+  
+  scale_color_manual(values = c("Illegal Immigration" = "blue", 
+                                "Political Corruption" = "red", 
+                                "Economic Crisis" = "green")) + 
+  
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    strip.text = element_text(size = 12)
+  )
+
+
+
+```
+```{r}
+ggplot(df_long, aes(x = age_group, y = Rating, color = LibConsPolitValue)) +
+  geom_boxplot() +
+  labs(title = "Risikowahrnehmung nach Altersgruppe und politischer Orientierung")
+
+
+```
+
+
+```{r, fig.width=15, fig.height=8}
+# Zuerst sicherstellen, dass die Daten korrekt sind (Politische Ausrichtung und Geschlecht)
+df_aggregated <- df_long %>%
+  mutate(
+    PolitCategory = case_when(
+      LeftRightPolitValue <= 3 ~ "Very Left",
+      LeftRightPolitValue >= 8 ~ "Very Right",
+      TRUE ~ "Middle"
+    ),
+    PolitCategory = factor(PolitCategory, levels = c("Very Left", "Middle", "Very Right")),  # Setzt die Reihenfolge
+    gender = recode(gender, 
+                    "Male" = "Male", 
+                    "Female" = "Female"),  # Sicherstellen, dass Geschlecht korrekt kodiert ist
+    Risk_f = recode(Risk_f, 
+                    "Vaccination" = "Vaccination", 
+                    "ViralPandemic" = "Viral Pandemic",
+                    "MentHealthProb" = "Mental Health Problems", 
+                    "SexAssault" = "Sexual Assault",
+                    "GunViol" = "Gun Violence",
+                    "Terrorism" = "Terrorism",
+                    "ClimateChange" = "Climate Change",
+                    "NaturalDisast" = "Natural Disaster",
+                    "NuclPowerPlant" = "Nuclear Power Plant",
+                    "IllegImmigrat" = "Illegal Immigration",
+                    "PolitCorrupt" = "Political Corruption",
+                    "EconCrisis" = "Economic Crisis")
+  )
+
+# Mittelwert der Risikowahrnehmung für jede Kombination aus politischer Ausrichtung, Geschlecht und Risiko berechnen
+df_agg_mean <- df_aggregated %>%
+  group_by(PolitCategory, gender, Risk_f) %>%
+  summarise(MeanRating = mean(Rating, na.rm = TRUE), .groups = 'drop')
+
+# Manuell die Reihenfolge der Risiken und Domänen festlegen
+df_agg_mean$Risk_f <- factor(df_agg_mean$Risk_f, levels = c(
+  "Vaccination", "Mental Health Problems", "Viral Pandemic", # Health
+  "Sexual Assault", "Gun Violence", "Terrorism",              # Crime
+  "Climate Change", "Natural Disaster", "Nuclear Power Plant",# Nature
+  "Illegal Immigration", "Political Corruption", "Economic Crisis" # Social/Political
+))
+
+# Erstellen des Plots für die durchschnittliche Risikowahrnehmung nach politischer Ausrichtung und Geschlecht
+ggplot(df_agg_mean, aes(x = MeanRating, y = Risk_f, color = PolitCategory, shape = gender)) + 
+  geom_point(size = 4, alpha = 0.7) +  # Punkte mit Größe und Transparenz
+  scale_color_manual(values = c("Very Left" = "#4f81bd", 
+                                "Middle" = "#F2CB00", 
+                                "Very Right" = "#D84A2E")) +  # Farbpalette für politische Ausrichtung
+  scale_shape_manual(values = c("Male" = 16, "Female" = 17)) +  # Verschiedene Symbole für Geschlecht
+  labs(title = "Durchschnittliche Risikowahrnehmung nach politischer Ausrichtung und Geschlecht",
+       x = "Durchschnittliche Risikowahrnehmung",
+       y = "Risiko",
+       color = "Politische Ausrichtung",
+       shape = "Geschlecht") +
+  scale_x_continuous(limits = c(0, 10)) +  # Horizontalachse von 0 bis 10
+  theme_minimal() +  # Minimalistisches Design
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+
+```
+
+```{r}
+ggplot(df_agg_mean, aes(x = PolitCategory, y = Risk_f, fill = MeanRating)) +
+  geom_tile() +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Heatmap der Risikowahrnehmung nach politischer Ausrichtung und Risiko",
+       x = "Politische Ausrichtung", y = "Risiko") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+#
+```{r}
+
+
+```
+
+```{r}
+
+
+# Sicherstellen, dass die notwendigen Spalten existieren und korrekt zugeordnet sind
+df_aggregated <- df_long %>%
+  mutate(
+    PolitCategory = case_when(
+      LeftRightPolitValue <= 3 ~ "Very Left",
+      LeftRightPolitValue >= 8 ~ "Very Right",
+      TRUE ~ "Middle"
+    ),
+    PolitCategory = factor(PolitCategory, levels = c("Very Left", "Middle", "Very Right")),
+    RiskDomain = case_when(
+      Risk_f %in% c("Vaccination", "Viral Pandemic", "Mental Health Problems") ~ "Health",
+      Risk_f %in% c("Sexual Assault", "Gun Violence", "Terrorism") ~ "Crime",
+      Risk_f %in% c("Climate Change", "Natural Disaster", "Nuclear Power Plant") ~ "Nature",
+      Risk_f %in% c("Illegal Immigration", "Political Corruption", "Economic Crisis") ~ "Social/Political",
+      TRUE ~ "Other"
+    )
+  )
+
+# Aggregierte Daten nach politischer Orientierung und Risiko-Domäne berechnen
+df_radar <- df_aggregated %>%
+  group_by(PolitCategory, RiskDomain) %>%
+  summarise(MeanRating = mean(Rating, na.rm = TRUE), .groups = 'drop')
+
+# Überprüfen, welche RiskDomains existieren
+unique(df_radar$RiskDomain)
+
+# Spread der Daten in ein breites Format umwandeln
+df_radar_wide <- df_radar %>%
+  spread(RiskDomain, MeanRating) 
+
+# Überprüfen, welche Spalten vorhanden sind
+existing_columns <- colnames(df_radar_wide)
+
+# Nur die existierenden Spalten auswählen (sichere Methode)
+df_radar_wide <- df_radar_wide %>%
+  select(PolitCategory, all_of(existing_columns[existing_columns != "PolitCategory"]))
+
+# Min und Max Werte für den Radar Chart hinzufügen
+df_radar_wide <- bind_rows(
+  data.frame(PolitCategory = "Max", Health = 10, Crime = 10, `Social/Political` = 10),
+  data.frame(PolitCategory = "Min", Health = 0, Crime = 0, `Social/Political` = 0),
+  df_radar_wide
+)
+
+# Erstellen des Spider Plots mit fmsb
+radar_data <- df_radar_wide[, 2:ncol(df_radar_wide)]
+rownames(radar_data) <- df_radar_wide$PolitCategory
+
+# Radar Chart erstellen
+radarchart(radar_data, axistype = 1, 
+           pcol = c("#4f81bd", "#F2CB00", "#D84A2E"), # Farben für die politischen Kategorien
+           pfcol = c("#4f81bd", "#F2CB00", "#D84A2E"), # Farben für die politischen Kategorien
+           plwd = 4, plty = 1, 
+           cglcol = "gray", cglty = 1, axislabcol = "black", caxislabels = c(0, 5, 10),
+           axislabcex = 1.2, vlcex = 1.2,
+           title = "Risikowahrnehmung nach politischen Kategorien und Domaenen")
+
+
+
+```
+
+```{r}
+
+
+```
+
+
+## Reading in Data Treshold 5 minutes
+
+Now I will look at the data with threshold 5 minutes to compare the results of the Mixed Effects Models.
+```{r}
+df_final_5_tresh <- read_excel("C:\\Users\\vanes\\OneDrive\\Desktop\\Master Psychologie\\4. Semester\\Masterarbeit\\Datafiles\\Dataset mit unterschiedlichen treshholds\\newest_dat_file.xls", sheet = 4)
+
+```
+
+## visualization of the number of participants
+```{r}
+df_final_5_tresh %>%
+  group_by(Country) %>%
+  summarize(Number_of_Participants = n()) %>%
+  ggplot(aes(x = Country, y = Number_of_Participants, fill = Country)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = Number_of_Participants), vjust = -0.5, position = position_dodge(width = 0.9)) +
+  labs(title = "Number of Participants from the US (Threshold: 5 Minutes)",
+       x = "Country", 
+       y = "Number of Participants") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4"))
+
+```
+
+Out of a total of 1182 participants, 1067 had valid values for both political scales, therefore 115 participants were excluded due to missing values in one or both of the political scales.
+
+Treshold 3: 1689 participants
+```{r}
+# Filter US participants where both political values are not missing in df_final_5_tresh
+us_filtered_5 <- df_final_5_tresh[df_final_5_tresh$Country == "US" & 
+                                  !is.na(df_final_5_tresh$LibConsPolitValue) & 
+                                  !is.na(df_final_5_tresh$LeftRightPolitValue), ]
+
+# Count the number of participants where both values are filled
+num_participants_both_filled_5 <- nrow(us_filtered_5)
+
+# Display the result
+num_participants_both_filled_5
+
+```
+
+# Correlation between the political scales
+
+The correlation for the threshold of 5 is 0.7517, while for the threshold of 3, it was 0.7609. The difference in the correlation values suggests that there may be a slight decrease in the strength of the relationship between the political scales at the 5-minute threshold compared to the 3-minute threshold. 
+
+```{r}
+# Calculate correlation using Pearson method
+correlation_result5 <- cor(us_filtered_5$LibConsPolitValue, us_filtered_5$LeftRightPolitValue, 
+                          method = "pearson", use = "complete.obs")
+print(correlation_result5)
+
+```
+# Contradictory responses: 18
+
+```{r}
+# Flagging contradictory responses based on a 10-point difference
+contradictory_responses5 <- us_filtered_5 %>%
+  mutate(contradictory = abs(LibConsPolitValue - LeftRightPolitValue) == 10)
+
+# Counting the number of contradictory responses
+num_contradictory5 <- sum(contradictory_responses$contradictory, na.rm = TRUE)
+
+# Display the result
+num_contradictory5
+
+```
+
+
+# pivot longer
+```{r}
+risk_cols5 <- which(str_detect(colnames(us_filtered_5), pattern = "Affect|Sever|Probs"))
+
+df_long5 <- us_filtered_5 %>% 
+  pivot_longer(cols = risk_cols5,
+               names_to = c("Risk", "Risk_Dimension"),
+               values_to = "Rating",
+               names_pattern = "(\\w+)(Affect|Sever|Probs)")
+
+
+df_long5 <- df_long5 %>% 
+   mutate(education = str_trim(education),
+      education = factor(education, levels = c("NA","Other", "No formal school education", "Less than high school", "High school diploma",
+                                                   "some college", "Bachelor’s degree", "Master’s degree", "Doctoral degree"), ordered = T),
+      Risk_Dimension_f = factor(Risk_Dimension),
+      Risk_f = factor(Risk),
+      Country_f = factor(Country)
+      )
+
+```
+
+# Mixed-Effects Model
+
+Threshold 3 Results:
+Lib-Cons Political Value (-0.047156)
+Left-Right Political Value (0.042765)
+
+Threshold 5 Results:
+Lib-Cons Political Value (-0.04490)
+Left-Right Political Value (-0.01325)
+
+
+In both models, LibConsPolitValue has a negative relationship with risk perception, meaning more conservative people tend to perceive the risks as less threatening. However, the strength of this relationship is slightly weaker in the threshold 5 model compared to threshold 3.
+
+The LeftRightPolitValue coefficient shows opposite trends in the two models:
+
+Threshold 3: A positive relationship where right-wing individuals perceive risks as more threatening.
+Threshold 5: A negative relationship (weak), suggesting that right-wing individuals perceive risks as less threatening. This change may indicate a difference in how political attitudes influence risk perception at different thresholds.
+
+```{r}
+mixed_model_polit5 <- lmer(Rating ~ LibConsPolitValue + LeftRightPolitValue + (1|id), data = df_long5)
+
+summary(mixed_model_polit5)
+
+```
